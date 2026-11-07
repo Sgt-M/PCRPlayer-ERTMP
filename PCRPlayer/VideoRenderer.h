@@ -12,7 +12,7 @@
 
 #include <initguid.h>
 #include <qnetwork.h>
-#include <qedit.h>
+//[port] qedit.h is unused and absent from modern SDKs: #include <qedit.h>
 
 #include <streams.h>
 

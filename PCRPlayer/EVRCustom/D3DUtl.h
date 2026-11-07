@@ -1,6 +1,19 @@
 #pragma once
 
-#include <d3dx9tex.h>
+//[port] D3DX(d3dx9)依存撤去: 標準同梱の d3dcompiler で置換
+#include <d3dcompiler.h>
+
+//[port] D3DXMACRO 互換(D3D_SHADER_MACRO は固定長配列のため別定義)
+struct D3DXMACRO
+{
+	LPCSTR Name;
+	LPCSTR Definition;
+};
+
+//[port] ID3DXBuffer/ID3DXInclude 互換: ID3DBlob/ID3DInclude で代用
+typedef ID3DBlob ID3DXBuffer;
+typedef ID3DXBuffer* LPD3DXBUFFER;
+typedef ID3DInclude* LPD3DXINCLUDE;
 #include "DX9Shaders.h"
 
 namespace d3dutl {
@@ -67,37 +80,29 @@ HINSTANCE GetD3X9Dll();
 
 class D3DLoader {
 
-	typedef HRESULT (WINAPI * D3DXCreateTexturePtr) (
-			LPDIRECT3DDEVICE9         pDevice,
-			UINT                      Width,
-			UINT                      Height,
-			UINT                      MipLevels,
-			DWORD                     Usage,
-			D3DFORMAT                 Format,
-			D3DPOOL                   Pool,
-			LPDIRECT3DTEXTURE9*       ppTexture);
+	//[port] d3dcompiler 側関数のシグネチャ
+	typedef HRESULT (WINAPI * D3DCompilePtr) (
+			LPCVOID		pSrcData,
+			SIZE_T		SrcDataSize,
+			LPCSTR		pSourceName,
+			const D3D_SHADER_MACRO*	pDefines,
+			ID3DInclude*	pInclude,
+			LPCSTR		pEntrypoint,
+			LPCSTR		pTarget,
+			UINT		Flags1,
+			UINT		Flags2,
+			ID3DBlob**	ppCode,
+			ID3DBlob**	ppErrorMsgs);
 
-	typedef HRESULT (WINAPI * D3DXCompileShaderPtr) (
-		LPCSTR		pSrcData,
-		UINT		SrcDataLen,
-		CONST D3DXMACRO* pDefines,
-		LPD3DXINCLUDE	pInclude,
-		LPCSTR		pFunctionName,
-		LPCSTR		pProfile,
-		DWORD		Flags,
-		LPD3DXBUFFER*	ppShader,
-		LPD3DXBUFFER*	ppErrorMsgs,
-		LPD3DXCONSTANTTABLE* ppConstantTable);
+	typedef HRESULT (WINAPI * D3DDisassemblePtr) (
+			LPCVOID		pSrcData,
+			SIZE_T		SrcDataSize,
+			UINT		Flags,
+			LPCSTR		szComments,
+			ID3DBlob**	ppDisassembly);
 
-	typedef HRESULT (WINAPI * D3DXDisassembleShaderPtr) (
-		CONST DWORD*	pShader,
-		bool		EnableColorCode,
-		LPCSTR		pComments,
-		LPD3DXBUFFER*	ppDisassembly);
-
-	static D3DXCreateTexturePtr D3DXCreateTexture_;
-	static D3DXCompileShaderPtr D3DXCompileShader_;
-	static D3DXDisassembleShaderPtr D3DXDisassembleShader_;
+	static D3DCompilePtr D3DCompile_;
+	static D3DDisassemblePtr D3DDisassemble_;
 
 
 
@@ -119,11 +124,9 @@ public:
 			D3DPOOL                   Pool,
 			LPDIRECT3DTEXTURE9*       ppTexture)
 	{
-		if (D3DXCreateTexture_)
-		{
-			return D3DXCreateTexture_(pDevice, Width, Height, MipLevels, Usage, Format, Pool, ppTexture);
-		}
-		return E_NOTIMPL;
+		//[port] D3DXCreateTexture は単純な生成ラッパーのため Direct3D9 API に直行
+		if (!pDevice || !ppTexture) { return E_INVALIDARG; }
+		return pDevice->CreateTexture(Width, Height, MipLevels, Usage, Format, Pool, ppTexture, NULL);
 	}
 
 	static HRESULT WINAPI D3DXCompileShader(
@@ -136,11 +139,24 @@ public:
 			DWORD		Flags,
 			LPD3DXBUFFER*	ppShader,
 			LPD3DXBUFFER*	ppErrorMsgs,
-			LPD3DXCONSTANTTABLE* ppConstantTable)
+			void*		/*ppConstantTable*/)
 	{
-		if (D3DXCompileShader_)
+		if (D3DCompile_)
 		{
-			return D3DXCompileShader_(pSrcData, SrcDataLen, pDefines, pInclude, pFunctionName, pProfile, Flags, ppShader, ppErrorMsgs, ppConstantTable);
+			//[port] D3DXMACRO(LPCSTR) -> D3D_SHADER_MACRO(char[128]) 変換
+			D3D_SHADER_MACRO macros[8];
+			int n = 0;
+			while (pDefines && n < 7 && (pDefines[n].Name || pDefines[n].Definition))
+			{
+				strncpy_s(macros[n].Name, pDefines[n].Name ? pDefines[n].Name : "", _TRUNCATE);
+				strncpy_s(macros[n].Definition, pDefines[n].Definition ? pDefines[n].Definition : "", _TRUNCATE);
+				n++;
+			}
+			macros[n].Name[0] = 0;
+			macros[n].Definition[0] = 0;
+
+			return D3DCompile_(pSrcData, (SIZE_T)SrcDataLen, NULL, (n > 0 ? macros : NULL),
+				pInclude, pFunctionName, pProfile, Flags, 0, ppShader, ppErrorMsgs);
 		}
 		return E_NOTIMPL;
 	}
@@ -148,18 +164,19 @@ public:
 
 	static HRESULT WINAPI D3DXDisassembleShader(
 			CONST DWORD*	pShader,
+			UINT		ShaderSize,
 			bool		EnableColorCode,
 			LPCSTR		pComments,
 			LPD3DXBUFFER*	ppDisassembly)
 	{
-		if (D3DXDisassembleShader_)
+		//[port] D3DDisassemble はサイズ必須のため ShaderSize 追加
+		if (D3DDisassemble_)
 		{
-			return D3DXDisassembleShader_(pShader, EnableColorCode, pComments, ppDisassembly);
+			return D3DDisassemble_(pShader, (SIZE_T)ShaderSize, EnableColorCode ? D3DIS_ENABLE_COLOR : 0, pComments, ppDisassembly);
 		}
 		return E_NOTIMPL;
 	}
 };
-
 
 
 

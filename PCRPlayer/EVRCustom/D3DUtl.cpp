@@ -6,22 +6,22 @@ namespace d3dutl {
 
 HINSTANCE GetD3X9Dll()
 {
-#if D3DX_SDK_VERSION < 43
-#error DirectX SDK June 2010 (v43) or newer is required
-#endif
+	//[port] legacy D3DX DLL -> Windows 同梱の d3dcompiler_47.dll へ(シェーダコンパイル/逆アセンブル)
 	static HINSTANCE s_hD3DX9Dll = NULL;
 
 	if (s_hD3DX9Dll == NULL)
 	{
-		// load latest compatible version of the DLL that is available
-		s_hD3DX9Dll = LoadLibrary(L"d3dx9_43.dll");
+		s_hD3DX9Dll = LoadLibrary(L"d3dcompiler_47.dll");
+		if (s_hD3DX9Dll == NULL)
+		{
+			s_hD3DX9Dll = LoadLibrary(L"d3dcompiler.dll");
+		}
 	}
 	return s_hD3DX9Dll;
 }
 
-D3DLoader::D3DXCreateTexturePtr D3DLoader::D3DXCreateTexture_ = NULL;
-D3DLoader::D3DXCompileShaderPtr D3DLoader::D3DXCompileShader_ = NULL;
-D3DLoader::D3DXDisassembleShaderPtr D3DLoader::D3DXDisassembleShader_ = NULL;
+D3DLoader::D3DCompilePtr D3DLoader::D3DCompile_ = NULL;
+D3DLoader::D3DDisassemblePtr D3DLoader::D3DDisassemble_ = NULL;
 
 D3DLoader::D3DLoader()
 {
@@ -29,9 +29,9 @@ D3DLoader::D3DLoader()
 
 	if (hDll)
 	{
-		D3DXCreateTexture_ = (D3DXCreateTexturePtr)GetProcAddress(hDll, "D3DXCreateTexture");
-		D3DXCompileShader_ = (D3DXCompileShaderPtr)GetProcAddress(hDll, "D3DXCompileShader");
-		D3DXDisassembleShader_ = (D3DXDisassembleShaderPtr)GetProcAddress(hDll, "D3DXDisassembleShader");
+		//[port] d3dcompiler エクスポートに接続(CreateTexture は D3D9 API 直行のため不要)
+		D3DCompile_ = (D3DCompilePtr)GetProcAddress(hDll, "D3DCompile");
+		D3DDisassemble_ = (D3DDisassemblePtr)GetProcAddress(hDll, "D3DDisassemble");
 	}
 }
 
@@ -196,7 +196,7 @@ static HRESULT CompileShader(
 	}
 
 	if (disasm) {
-		hr = D3DLoader::D3DXDisassembleShader((DWORD*)pShader->GetBufferPointer(), FALSE, NULL, &pDisAsm);
+		hr = D3DLoader::D3DXDisassembleShader((DWORD*)pShader->GetBufferPointer(), (UINT)pShader->GetBufferSize(), FALSE, NULL, &pDisAsm);
 		if (SUCCEEDED(hr) && pDisAsm) {
 			*disasm = CStringA((const char*)pDisAsm->GetBufferPointer());
 		}
