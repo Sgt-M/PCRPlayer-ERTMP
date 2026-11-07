@@ -3,12 +3,8 @@
 //[port] D3DX(d3dx9)依存撤去: 標準同梱の d3dcompiler で置換
 #include <d3dcompiler.h>
 
-//[port] D3DXMACRO 互換(D3D_SHADER_MACRO は固定長配列のため別定義)
-struct D3DXMACRO
-{
-	LPCSTR Name;
-	LPCSTR Definition;
-};
+//[port] D3D_SHADER_MACRO と D3DXMACRO は同型(LPCSTR Name/Definition)
+typedef D3D_SHADER_MACRO D3DXMACRO;
 
 //[port] ID3DXBuffer/ID3DXInclude 互換: ID3DBlob/ID3DInclude で代用
 typedef ID3DBlob ID3DXBuffer;
@@ -143,19 +139,8 @@ public:
 	{
 		if (D3DCompile_)
 		{
-			//[port] D3DXMACRO(LPCSTR) -> D3D_SHADER_MACRO(char[128]) 変換
-			D3D_SHADER_MACRO macros[8];
-			int n = 0;
-			while (pDefines && n < 7 && (pDefines[n].Name || pDefines[n].Definition))
-			{
-				strncpy_s(macros[n].Name, pDefines[n].Name ? pDefines[n].Name : "", _TRUNCATE);
-				strncpy_s(macros[n].Definition, pDefines[n].Definition ? pDefines[n].Definition : "", _TRUNCATE);
-				n++;
-			}
-			macros[n].Name[0] = 0;
-			macros[n].Definition[0] = 0;
-
-			return D3DCompile_(pSrcData, (SIZE_T)SrcDataLen, NULL, (n > 0 ? macros : NULL),
+			//[port] D3D_SHADER_MACRO への変換不要(同型)。終了は {NULL,NULL} 要素で従来通り
+			return D3DCompile_(pSrcData, (SIZE_T)SrcDataLen, NULL, pDefines,
 				pInclude, pFunctionName, pProfile, Flags, 0, ppShader, ppErrorMsgs);
 		}
 		return E_NOTIMPL;
@@ -172,7 +157,7 @@ public:
 		//[port] D3DDisassemble はサイズ必須のため ShaderSize 追加
 		if (D3DDisassemble_)
 		{
-			return D3DDisassemble_(pShader, (SIZE_T)ShaderSize, EnableColorCode ? D3DIS_ENABLE_COLOR : 0, pComments, ppDisassembly);
+			return D3DDisassemble_(pShader, (SIZE_T)ShaderSize, EnableColorCode ? D3D_DISASM_ENABLE_COLOR_CODE : 0, pComments, ppDisassembly);
 		}
 		return E_NOTIMPL;
 	}
