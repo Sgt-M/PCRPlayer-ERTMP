@@ -31,3 +31,7 @@ ipch/
 *.exe
 *.dll
 *.lib
+
+# サードパーティ依存(外部取得)
+third_party/
+vcpkg_installed/
