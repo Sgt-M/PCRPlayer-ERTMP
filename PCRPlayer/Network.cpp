@@ -27,7 +27,7 @@ URLParser::URLParser(const std::wstring& url)
 	std::wstring::const_reverse_iterator file_begin = std::find(path_.rbegin(), path_.rend(), '/');
 	if (file_begin != path_.rend())
 	{
-		file_.assign(file_begin.base(), path_.end());
+		file_.assign(file_begin.base(), path_.cend()); //[port] const_iterator“¯Œ^‚Ö(MSVCVSTL‚Ìassign§–ñ)
 	}
 
 	it = parseQuery(query_, it, url.end());
