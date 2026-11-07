@@ -1,0 +1,33 @@
+# Visual Studio ビルド成果物
+Debug/
+Release/
+x64/
+build/
+out/
+ipch/
+.vs/
+
+# ソリューション/プロジェクトのローカル状態
+*.suo
+*.user
+*.vcxproj.user
+*.sdf
+*.opensdf
+*.aps
+
+# インターミディエート
+*.obj
+*.pch
+*.pdb
+*.ilk
+*.exp
+*.iobj
+*.ipdb
+*.tlog
+*.lastbuildstate
+*.log
+
+# ビルド出力
+*.exe
+*.dll
+*.lib
