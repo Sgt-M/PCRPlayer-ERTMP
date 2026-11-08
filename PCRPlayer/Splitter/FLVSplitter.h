@@ -118,6 +118,10 @@ CFLVSplitterFilter
 		BYTE SoundRate;
 		BYTE SoundSize;
 		BYTE SoundType;
+		//[pcr-ertmp] enhanced audio state (valid when IsEx)
+		bool IsEx;
+		BYTE PacketType;
+		UINT32 FourCC;
 	};
 
 	bool ReadTag(AudioTag& at);
@@ -126,9 +130,24 @@ CFLVSplitterFilter
 	{
 		BYTE FrameType;
 		BYTE CodecID;
+		//[pcr-ertmp] enhanced video state (valid when IsEx)
+		bool IsEx;
+		BYTE PacketType;   // ex: PacketTypeSequenceStart/CodedFrames/...
+		UINT32 FourCC;     // ex: 'hvc1','av01','vp09','mp4a',... (host order)
+		UINT32 TsOffset;   // ex: composition time (already sign extended)
 	};
 
 	bool ReadTag(VideoTag& vt);
+
+	//[pcr-ertmp] fourCC helpers + enhanced tag media type builders (see .cpp)
+	static UINT32 MakeFourCC(UINT32 be);           // wire (big endian) -> host
+	static bool IsEnhancedVideoFourCC(UINT32 cc);
+	static bool IsEnhancedAudioFourCC(UINT32 cc);
+	//[pcr-ertmp] parse codec width/height from the sequence-start record and
+	//fill a candidate media type list (multiple subtypes so the graph builder
+	//can find one the installed decoder accepts). Returns false = unsupported.
+	bool BuildEnhancedVideoTypes(UINT32 fourcc, CMediaType& base, CAtlArray<CMediaType>& mts, UINT32& w, UINT32& h);
+	bool BuildEnhancedAudioTypes(UINT32 fourcc, const BYTE* cfg, DWORD cfgSize, CAtlArray<CMediaType>& mts);
 
 	void NormalSeek(REFERENCE_TIME rt);
 	void AlternateSeek(REFERENCE_TIME rt);

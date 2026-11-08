@@ -306,10 +306,24 @@ bool CFLVSplitterFilter::ReadTag(AudioTag& at)
 	if(!m_pFile->GetRemaining()) 
 		return false;
 
-	at.SoundFormat = (BYTE)m_pFile->BitRead(4);
-	at.SoundRate = (BYTE)m_pFile->BitRead(2);
-	at.SoundSize = (BYTE)m_pFile->BitRead(1);
-	at.SoundType = (BYTE)m_pFile->BitRead(1);
+	//[pcr-ertmp] byte0 layout: SoundFormat(4)|Rate(2)|Size(1)|Type(1).
+	//SoundFormat == 9 is the IsExAudioHeader marker of Enhanced RTMP: the low
+	//nibble is then the packet type and a big-endian UI32 fourCC follows.
+	BYTE b0 = (BYTE)m_pFile->BitRead(8);
+
+	at.SoundFormat = (b0 >> 4) & 0x0F;
+	at.SoundRate = (b0 >> 2) & 0x03;
+	at.SoundSize = (b0 >> 1) & 0x01;
+	at.SoundType = b0 & 0x01;
+	at.IsEx = (at.SoundFormat == 9);
+	at.PacketType = 0;
+	at.FourCC = 0;
+
+	if (at.IsEx) {
+		at.PacketType = b0 & 0x0F;
+		if (!m_pFile->GetRemaining()) { return false; }
+		at.FourCC = _byteswap_ulong((UINT32)m_pFile->BitRead(32)); // -> MAKEFOURCC order
+	}
 
 	return true;
 }
@@ -319,10 +333,382 @@ bool CFLVSplitterFilter::ReadTag(VideoTag& vt)
 	if(!m_pFile->GetRemaining()) 
 		return false;
 
-	vt.FrameType = (BYTE)m_pFile->BitRead(4);
-	vt.CodecID = (BYTE)m_pFile->BitRead(4);
+	//[pcr-ertmp] byte0 layout: IsExHeader(1)|FrameType(3)|PacketType(4).
+	//When IsExHeader is set the CodecID nibble must NOT be read as a codec id;
+	//a big-endian UI32 fourCC follows and the packet type selects the rest of
+	//the header. (veovera/enhanced-rtmp v1; matches FFmpeg's flv demuxer.)
+	BYTE b0 = (BYTE)m_pFile->BitRead(8);
+
+	vt.IsEx = (b0 & 0x80) != 0;
+	vt.FrameType = (b0 >> 4) & 0x07;
+	vt.CodecID = b0 & 0x0F;
+	vt.PacketType = 0;
+	vt.FourCC = 0;
+	vt.TsOffset = 0;
+
+	if (!vt.IsEx) {
+		return true;
+	}
+
+	vt.PacketType = vt.CodecID;
+
+	if (!m_pFile->GetRemaining()) { return false; }
+	vt.FourCC = _byteswap_ulong((UINT32)m_pFile->BitRead(32)); // -> MAKEFOURCC order
+
+	// PacketTypeCodedFrames carries the SI24 composition time offset; every
+	// other packet type has no timing field (SequenceStart carries the codec
+	// configuration record, Metadata carries AMF, and the rest are not
+	// delivered).
+	if (vt.PacketType == 1) {
+		if (!m_pFile->GetRemaining()) { return false; }
+		UINT32 ts = (UINT32)m_pFile->BitRead(24);
+		vt.TsOffset = (ts + 0xff800000) ^ 0xff800000; // sign extension
+	}
 
 	return true;
+}
+
+//[pcr-ertmp] Enhanced RTMP support helpers ---------------------------------
+// BitRead(32) yields wire order (b0<<24|...); _byteswap_ulong converts it to
+// MAKEFOURCC order used by all comparisons ('hvc1' wire 0x68766331 -> 0x31637668).
+UINT32 CFLVSplitterFilter::MakeFourCC(UINT32 be)
+{
+	return _byteswap_ulong(be);
+}
+
+bool CFLVSplitterFilter::IsEnhancedVideoFourCC(UINT32 cc)
+{
+	switch (cc) {
+	case MAKEFOURCC('a','v','c','1'): case MAKEFOURCC('a','v','c','C'):
+	case MAKEFOURCC('h','v','c','1'): case MAKEFOURCC('h','v','c','C'):
+	case MAKEFOURCC('h','e','v','1'):
+	case MAKEFOURCC('a','v','0','1'):
+	case MAKEFOURCC('v','p','0','8'): case MAKEFOURCC('v','p','0','9'):
+		return true;
+	}
+	return false;
+}
+
+bool CFLVSplitterFilter::IsEnhancedAudioFourCC(UINT32 cc)
+{
+	switch (cc) {
+	case MAKEFOURCC('m','p','4','a'):
+	case MAKEFOURCC('O','p','u','s'):
+	case MAKEFOURCC('f','L','a','C'):
+	case MAKEFOURCC('a','c','-','3'):
+	case MAKEFOURCC('e','c','-','3'):
+		return true;
+	}
+	return false;
+}
+
+namespace {
+// small bit reader over a memory blob (config records are parsed off-stream)
+struct ErtmpBitStream {
+	const BYTE* p; size_t n; size_t bit;
+	ErtmpBitStream(const BYTE* d, size_t bytes) : p(d), n(bytes), bit(0) {}
+	UINT64 read(size_t bits)
+	{
+		UINT64 v = 0;
+		for (size_t i = 0; i < bits; ++i) {
+			if ((bit >> 3) >= n) { return 0; }
+			v = (v << 1) | ((p[bit >> 3] >> (7 - (bit & 7))) & 1);
+			++bit;
+		}
+		return v;
+	}
+	void skip(size_t bits) { bit += bits; }
+	UINT64 uexp()
+	{
+		size_t zeros = 0;
+		while ((bit >> 3) < n && read(1) == 0) { ++zeros; if (zeros > 31) { return 0; } }
+		// leading '1' bit + zeros suffix bits: value = info - 1
+		return ((1ULL << zeros) | read(zeros)) - 1;
+	}
+};
+
+// profile_tier_level(1, maxSub) bit-exact skip (HEVC)
+void hevc_skip_ptl(ErtmpBitStream& bs, UINT32 maxSub)
+{
+	bs.skip(96); // general block: 12 bytes
+	if (maxSub > 0) {
+		UINT32 prof = (UINT32)bs.read(8);
+		UINT32 lvl = (UINT32)bs.read(8);
+		for (UINT32 i = maxSub; i < 8; ++i) { bs.skip(2); }
+		for (UINT32 i = 0; i < maxSub; ++i) {
+			if (prof & (0x80u >> i)) { bs.skip(88); }
+			if (lvl & (0x80u >> i)) { bs.skip(8); }
+		}
+	}
+}
+} // namespace
+
+//[pcr-ertmp] Build candidate media types from an enhanced-video sequence-start
+//configuration record located at the current file position. Several subtype
+//spellings are added so the graph builder finds one the installed decoder
+//accepts (LAV registers with FFmpeg-style fourCC subtypes).
+bool CFLVSplitterFilter::BuildEnhancedVideoTypes(UINT32 fourcc, CMediaType&,
+	CAtlArray<CMediaType>& mts, UINT32& w, UINT32& h)
+{
+	w = h = 0;
+
+	__int64 avail = m_pFile->GetRemaining();
+	if (avail <= 0 || avail > 512 * 1024) { return false; }
+
+	std::vector<BYTE> cfg((size_t)avail);
+	m_pFile->ByteRead(cfg.data(), (DWORD)cfg.size());
+
+	CMediaType mt;
+	mt.SetSampleSize(1);
+	mt.majortype = MEDIATYPE_Video;
+	mt.formattype = FORMAT_MPEG2Video;
+
+	MPEG2VIDEOINFO* vih = (MPEG2VIDEOINFO*)mt.AllocFormatBuffer(
+		FIELD_OFFSET(MPEG2VIDEOINFO, dwSequenceHeader) + (DWORD)cfg.size());
+	memset(vih, 0, mt.FormatLength());
+	vih->hdr.bmiHeader.biSize = sizeof(vih->hdr.bmiHeader);
+	vih->hdr.bmiHeader.biPlanes = 1;
+	vih->hdr.bmiHeader.biBitCount = 24;
+	vih->cbSequenceHeader = (DWORD)cfg.size();
+	memcpy(vih->dwSequenceHeader, cfg.data(), cfg.size());
+
+	if (fourcc == MAKEFOURCC('h','v','c','1') || fourcc == MAKEFOURCC('h','v','c','C')
+		|| fourcc == MAKEFOURCC('h','e','v','1')) {
+		// HEVCDecoderConfigurationRecord (ISO 14496-15): 23 fixed bytes
+		if (cfg.size() < 23 || cfg[0] != 1) { return false; }
+		vih->dwProfile = cfg[1] & 0x1F;   // general_profile_idc
+		vih->dwLevel = cfg[12];           // general_level_idc
+		vih->dwFlags = (cfg[21] & 3) + 1; // nal length size minus one
+
+		// walk the NAL arrays for the SPS (type 33) and derive coded size
+		size_t o = 23;
+		UINT32 numArrays = cfg[22] & 0x3F;
+		for (UINT32 a = 0; a < numArrays && o + 3 <= cfg.size(); ++a) {
+			UINT32 nalType = cfg[o] & 0x3F;
+			UINT32 numNalus = (cfg[o + 1] << 8) | cfg[o + 2];
+			o += 3;
+			for (UINT32 k = 0; k < numNalus && o + 2 <= cfg.size(); ++k) {
+				UINT32 len = (cfg[o] << 8) | cfg[o + 1];
+				if (o + 2 + len > cfg.size()) { break; }
+				if (nalType == 33 && len > 2) {
+					// HEVC NAL header is 2 bytes; hvcC NALs are stored with
+					// emulation prevention bytes (00 00 03) that must be
+					// removed before bit parsing the SPS RBSP.
+					const BYTE* rp = cfg.data() + o + 2;
+					size_t rn = len - 2;
+					std::vector<BYTE> epb;
+					epb.reserve(rn);
+					for (size_t q = 0; q < rn; ) {
+						if (q + 2 < rn && rp[q] == 0 && rp[q + 1] == 0 && rp[q + 2] == 3) {
+							epb.push_back(0); epb.push_back(0); q += 3;
+						} else {
+							epb.push_back(rp[q]); ++q;
+						}
+					}
+					ErtmpBitStream bs(epb.data() + 2, epb.size() - 2);
+					bs.skip(4);                         // sps_video_parameter_set_id
+					UINT32 maxSub = (UINT32)bs.read(3); // sps_max_sub_layers_minus1
+					bs.skip(1);                         // temporal_id_nesting_flag
+					hevc_skip_ptl(bs, maxSub);
+					bs.uexp();                          // sps_seq_parameter_set_id
+					UINT32 chroma = (UINT32)bs.uexp();  // chroma_format_idc
+					if (chroma == 3) { bs.skip(1); }    // separate_colour_plane_flag
+					UINT32 pw = (UINT32)bs.uexp();
+					UINT32 ph = (UINT32)bs.uexp();
+					UINT32 subW = (chroma == 3) ? 1 : 2;
+					UINT32 subH = (chroma == 1) ? 2 : 1;
+					if (bs.read(1)) {                   // conformance_window_flag
+						pw -= (UINT32)(bs.uexp() + bs.uexp()) * subW;
+						ph -= (UINT32)(bs.uexp() + bs.uexp()) * subH;
+					}
+					w = pw; h = ph;
+					break;
+				}
+				o += 2 + len;
+			}
+			if (w && h) { break; }
+		}
+		if (!w || !h) { addLog(L"ertmp: HEVC SPS size parse failed"); }
+		vih->hdr.bmiHeader.biWidth = (LONG)w;
+		vih->hdr.bmiHeader.biHeight = (LONG)h;
+		vih->hdr.dwPictAspectRatioX = (LONG)(w ? w : 16);
+		vih->hdr.dwPictAspectRatioY = (LONG)(h ? h : 9);
+
+		const UINT32 subs[] = { MAKEFOURCC('H','E','V','C'), MAKEFOURCC('h','v','c','1'),
+			MAKEFOURCC('h','e','v','1'), MAKEFOURCC('H','V','C','1'), MAKEFOURCC('h','e','v','c') };
+		for (size_t i = 0; i < _countof(subs); ++i) {
+			CMediaType m = mt;
+			m.subtype = FOURCCMap(subs[i]);
+			mts.Add(m);
+		}
+		return true;
+	}
+
+	if (fourcc == MAKEFOURCC('a','v','0','1')) {
+		// AV1CodecConfigurationRecord: 4 fixed bytes + configOBUs. Dimensions
+		// are left at 0; the FFmpeg-based decoder reads them from the
+		// sequence header OBU.
+		if (cfg.size() < 4) { return false; }
+		vih->hdr.bmiHeader.biWidth = 0;
+		vih->hdr.bmiHeader.biHeight = 0;
+		vih->hdr.dwPictAspectRatioX = 16;
+		vih->hdr.dwPictAspectRatioY = 9;
+		const UINT32 subs[] = { MAKEFOURCC('A','V','0','1'), MAKEFOURCC('A','V','1',' '),
+			MAKEFOURCC('a','v','0','1') };
+		for (size_t i = 0; i < _countof(subs); ++i) {
+			CMediaType m = mt;
+			m.subtype = FOURCCMap(subs[i]);
+			mts.Add(m);
+		}
+		return true;
+	}
+
+	if (fourcc == MAKEFOURCC('v','p','0','8') || fourcc == MAKEFOURCC('v','p','0','9')) {
+		if (cfg.size() < 4) { return false; }
+		vih->hdr.bmiHeader.biWidth = 0;
+		vih->hdr.bmiHeader.biHeight = 0;
+		vih->hdr.dwPictAspectRatioX = 16;
+		vih->hdr.dwPictAspectRatioY = 9;
+		const UINT32 subs[] = { MAKEFOURCC('V','P','9','0'), MAKEFOURCC('V','P','9',' '),
+			MAKEFOURCC('v','p','0','9'), MAKEFOURCC('V','P','8','0'), MAKEFOURCC('v','p','0','8') };
+		for (size_t i = 0; i < _countof(subs); ++i) {
+			CMediaType m = mt;
+			m.subtype = FOURCCMap(subs[i]);
+			mts.Add(m);
+		}
+		return true;
+	}
+
+	// 'avc1'/'avcC' carried enhanced: not handled (legacy path unaffected)
+	return false;
+}
+
+//[pcr-ertmp] Build candidate audio media types from an enhanced-audio config
+//record (AudioSpecificConfig / OpusHead / FLAC STREAMINFO).
+bool CFLVSplitterFilter::BuildEnhancedAudioTypes(UINT32 fourcc, const BYTE* cfg,
+	DWORD cfgSize, CAtlArray<CMediaType>& mts)
+{
+	if (!cfg || cfgSize == 0) { return false; }
+
+	if (fourcc == MAKEFOURCC('m','p','4','a')) {
+		if (cfgSize < 2) { return false; }
+		ErtmpBitStream bs(cfg, cfgSize);
+		bs.read(5); // audioObjectType
+		UINT32 idx = (UINT32)bs.read(4);
+		UINT32 chan = (UINT32)bs.read(4);
+		static const int rates[] = { 96000,88200,64000,48000,44100,32000,24000,
+			22050,16000,12000,11025,8000,7350 };
+		if (idx > 12 || chan > 7 || chan == 0) { return false; }
+
+		CMediaType mt;
+		mt.SetSampleSize(1);
+		mt.majortype = MEDIATYPE_Audio;
+		mt.subtype = FOURCCMap(WAVE_FORMAT_AAC);
+		mt.formattype = FORMAT_WaveFormatEx;
+		WAVEFORMATEX* wfe = (WAVEFORMATEX*)mt.AllocFormatBuffer(sizeof(WAVEFORMATEX) + cfgSize);
+		memset(wfe, 0, mt.FormatLength());
+		wfe->wFormatTag = WAVE_FORMAT_AAC;
+		wfe->nChannels = (WORD)chan;
+		wfe->nSamplesPerSec = rates[idx];
+		wfe->wBitsPerSample = 16;
+		wfe->nBlockAlign = 1;
+		wfe->cbSize = (WORD)cfgSize;
+		memcpy(wfe + 1, cfg, cfgSize);
+		mts.Add(mt);
+		return true;
+	}
+
+	if (fourcc == MAKEFOURCC('O','p','u','s')) {
+		// OpusHead: magic 'OpusHead'(8) version(1) channels(1) preSkip(2)
+		// rate(4) gain(2) mapping(1)
+		if (cfgSize < 16) { return false; }
+		BYTE channels = cfg[9];
+		if (channels == 0 || channels > 8) { return false; }
+
+		static const GUID SUBTYPE_OPUS =
+			{ 0x2C711410, 0xFDC2, 0x4E19, { 0xBA, 0x7D, 0x7B, 0x47, 0x50, 0xC8, 0x47, 0x44 } };
+
+		CMediaType mt;
+		mt.SetSampleSize(1);
+		mt.majortype = MEDIATYPE_Audio;
+		mt.subtype = SUBTYPE_OPUS;
+		mt.formattype = FORMAT_WaveFormatEx;
+		WAVEFORMATEXTENSIBLE* wfx = (WAVEFORMATEXTENSIBLE*)mt.AllocFormatBuffer(
+			sizeof(WAVEFORMATEXTENSIBLE) + cfgSize);
+		memset(wfx, 0, sizeof(WAVEFORMATEXTENSIBLE) + cfgSize);
+		wfx->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+		wfx->Format.nChannels = channels;
+		wfx->Format.nSamplesPerSec = 48000; // RFC 7845: container always states 48k
+		wfx->Format.wBitsPerSample = 16;
+		wfx->Format.nBlockAlign = (WORD)(channels * 2);
+		wfx->Format.nAvgBytesPerSec = 48000 * channels * 2;
+		wfx->Format.cbSize = 22 + (WORD)cfgSize;
+		wfx->Samples.wValidBitsPerSample = 16;
+		wfx->dwChannelMask = (channels == 1) ? SPEAKER_FRONT_CENTER
+			: (channels == 2) ? (SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT) : 0;
+		wfx->SubFormat = SUBTYPE_OPUS;
+		memcpy((BYTE*)wfx + sizeof(WAVEFORMATEXTENSIBLE), cfg, cfgSize);
+		mts.Add(mt);
+		return true;
+	}
+
+	if (fourcc == MAKEFOURCC('f','L','a','C')) {
+		// STREAMINFO: min/max block(16+16) min/max frame(24+24) rate(20)
+		// channels-1(3) bits-1(5) total samples(36)
+		if (cfgSize < 34) { return false; }
+		ErtmpBitStream bs(cfg, cfgSize);
+		bs.skip(16 + 16 + 24 + 24);
+		UINT32 rate = (UINT32)bs.read(20);
+		UINT32 chan = (UINT32)bs.read(3) + 1;
+		UINT32 bits = (UINT32)bs.read(5) + 1;
+		if (rate == 0 || chan == 0) { return false; }
+
+		static const GUID SUBTYPE_FLAC =
+			{ 0x9FAD7850, 0xB6B4, 0x4AB5, { 0x88, 0x2B, 0xAF, 0x92, 0x47, 0x4F, 0x95, 0xFD } };
+
+		CMediaType mt;
+		mt.SetSampleSize(1);
+		mt.majortype = MEDIATYPE_Audio;
+		mt.subtype = SUBTYPE_FLAC;
+		mt.formattype = FORMAT_WaveFormatEx;
+		WAVEFORMATEXTENSIBLE* wfx = (WAVEFORMATEXTENSIBLE*)mt.AllocFormatBuffer(
+			sizeof(WAVEFORMATEXTENSIBLE) + cfgSize);
+		memset(wfx, 0, sizeof(WAVEFORMATEXTENSIBLE) + cfgSize);
+		wfx->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+		wfx->Format.nChannels = (WORD)chan;
+		wfx->Format.nSamplesPerSec = rate;
+		wfx->Format.wBitsPerSample = (WORD)bits;
+		wfx->Format.nBlockAlign = (WORD)(chan * ((bits + 7) / 8));
+		wfx->Format.nAvgBytesPerSec = rate * wfx->Format.nBlockAlign;
+		wfx->Format.cbSize = 22;
+		wfx->Samples.wValidBitsPerSample = (WORD)bits;
+		wfx->dwChannelMask = (chan == 1) ? SPEAKER_FRONT_CENTER
+			: (chan == 2) ? (SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT) : 0;
+		wfx->SubFormat = SUBTYPE_FLAC;
+		memcpy((BYTE*)wfx + sizeof(WAVEFORMATEXTENSIBLE), cfg, cfgSize);
+		mts.Add(mt);
+		return true;
+	}
+
+	if (fourcc == MAKEFOURCC('a','c','-','3') || fourcc == MAKEFOURCC('e','c','-','3')) {
+		WORD tag = (fourcc == MAKEFOURCC('a','c','-','3')) ? 0x2000 /*AC3*/ : 0xAAC3 /*EAC3*/;
+		CMediaType mt;
+		mt.SetSampleSize(1);
+		mt.majortype = MEDIATYPE_Audio;
+		mt.subtype = FOURCCMap(tag);
+		mt.formattype = FORMAT_WaveFormatEx;
+		WAVEFORMATEX* wfe = (WAVEFORMATEX*)mt.AllocFormatBuffer(sizeof(WAVEFORMATEX));
+		memset(wfe, 0, mt.FormatLength());
+		wfe->wFormatTag = tag;
+		wfe->nChannels = 2;
+		wfe->nSamplesPerSec = 48000;
+		wfe->wBitsPerSample = 16;
+		wfe->nBlockAlign = 1;
+		mts.Add(mt);
+		return true;
+	}
+
+	return false;
 }
 
 #ifndef NOVIDEOTWEAK
@@ -464,6 +850,7 @@ HRESULT CFLVSplitterFilter::CreateOutputs(IAsyncReader* pAsyncReader)
 		CMediaType mt;
 		mt.SetSampleSize(1);
 		mt.subtype = GUID_NULL;
+		CAtlArray<CMediaType> mts; //[pcr-ertmp] prefilled types for enhanced tags
 
 		if (i != 0 && t.PreviousTagSize != prevTagSize) {
 			m_IgnorePrevSizes = true;
@@ -488,6 +875,38 @@ HRESULT CFLVSplitterFilter::CreateOutputs(IAsyncReader* pAsyncReader)
 
 			if(ReadTag(at))
 			{
+				if (at.IsEx) //[pcr-ertmp] enhanced audio: pin comes from the sequence-start tag only
+				{
+					name = L"Audio";
+					if (at.PacketType == 0 && IsEnhancedAudioFourCC(at.FourCC))
+					{
+						__int64 cfgPos = m_pFile->GetPos();
+						UINT32 cfgSize = (UINT32)(next - cfgPos);
+						if (cfgSize > 0 && cfgSize <= t.DataSize)
+						{
+							std::vector<BYTE> cfg(cfgSize);
+							m_pFile->ByteRead(cfg.data(), cfgSize);
+							if (BuildEnhancedAudioTypes(at.FourCC, cfg.data(), cfgSize, mts))
+							{
+								fTypeFlagsAudio = false;
+								addLog(L"ertmp: audio ex fourcc=0x%08X pkt=%u pin", at.FourCC, at.PacketType);
+							}
+							else
+							{
+								addLog(L"ertmp: unsupported audio ex fourcc=0x%08X", at.FourCC);
+								fTypeFlagsAudio = false; // don't wait for a legacy config that never comes
+							}
+						}
+					}
+					else if (at.PacketType >= 4)
+					{
+						addLog(L"ertmp: audio ex pkt=%u not supported", at.PacketType);
+						fTypeFlagsAudio = false;
+					}
+					// other pkt values: keep scanning for the config tag
+				}
+				else
+				{
 				int dataSize = t.DataSize - 1;
 
 				fTypeFlagsAudio = false;
@@ -568,14 +987,42 @@ HRESULT CFLVSplitterFilter::CreateOutputs(IAsyncReader* pAsyncReader)
 				}
 				
 				}
+				}
 			}
 		}
 		else if(t.TagType == 9 && t.DataSize != 0 && fTypeFlagsVideo)
 		{
 			UNREFERENCED_PARAMETER(vt);
 			VideoTag vt;
-			if(ReadTag(vt) && vt.FrameType == 1)
+			if(ReadTag(vt))
 			{
+				if (vt.IsEx) //[pcr-ertmp] enhanced video: pin comes from the sequence-start tag only
+				{
+					name = L"Video";
+					if (vt.PacketType == 0 && IsEnhancedVideoFourCC(vt.FourCC))
+					{
+						UINT32 ew = 0, eh = 0;
+						if (BuildEnhancedVideoTypes(vt.FourCC, mt, mts, ew, eh))
+						{
+							fTypeFlagsVideo = false;
+							addLog(L"ertmp: video ex fourcc=0x%08X %ux%u pin", vt.FourCC, ew, eh);
+						}
+						else
+						{
+							addLog(L"ertmp: unsupported video ex fourcc=0x%08X", vt.FourCC);
+							fTypeFlagsVideo = false; // don't wait for a legacy config that never comes
+						}
+					}
+					else if (vt.PacketType >= 5)
+					{
+						// MPEG2TS(5)/Multitrack(6)/ModEx(7): not supported by this splitter
+						addLog(L"ertmp: video ex pkt=%u not supported", vt.PacketType);
+						fTypeFlagsVideo = false;
+					}
+					// pkt 1-4 (coded/seqend/metadata without a config yet, live mid-stream): keep scanning
+				}
+				else if (vt.FrameType == 1)
+				{
 				int dataSize = t.DataSize - 1;
 
 				fTypeFlagsVideo = false;
@@ -822,13 +1269,16 @@ HRESULT CFLVSplitterFilter::CreateOutputs(IAsyncReader* pAsyncReader)
 				default:
 					fTypeFlagsVideo = true;
 				}
+				}
 			}
 		}
 			
 		if(mt.subtype != GUID_NULL)
 		{
-			CAtlArray<CMediaType> mts;
 			mts.Add(mt);
+		}
+		if(!mts.IsEmpty()) //[pcr-ertmp] also fires for enhanced prefilled types
+		{
 			CAutoPtr<CBaseSplitterOutputPin> pPinOut(DNew CBaseSplitterOutputPin(mts, name, this, this, &hr));
 			EXECUTE_ASSERT(SUCCEEDED(AddOutputPin(t.TagType, pPinOut)));
 		}
@@ -1344,7 +1794,13 @@ bool CFLVSplitterFilter::DemuxLoop()
 		if((t.DataSize > 0) && (t.TagType == 8 && ReadTag(at) || t.TagType == 9 && ReadTag(vt)))
 		{
 			UINT32 tsOffset = 0;
-			if(t.TagType == 9)
+			if(t.TagType == 9 && vt.IsEx) //[pcr-ertmp] enhanced video: header fully consumed by ReadTag
+			{
+				// only CodedFrames(1)/CodedFramesX(3) carry media samples
+				if(vt.PacketType != 1 && vt.PacketType != 3) goto NextTag;
+				tsOffset = vt.TsOffset;
+			}
+			else if(t.TagType == 9)
 			{
 				if(vt.FrameType == 5) goto NextTag; // video info/command frame
 				if(vt.CodecID == 4)
@@ -1363,7 +1819,9 @@ bool CFLVSplitterFilter::DemuxLoop()
 					tsOffset = (tsOffset + 0xff800000) ^ 0xff800000; // sign extension
 				}
 			}
-			if(t.TagType == 8 && at.SoundFormat == 10) {
+			if(t.TagType == 8 && at.IsEx) { //[pcr-ertmp] enhanced audio: only CodedFrames(1) carries samples
+				if (at.PacketType != 1) goto NextTag;
+			} else if(t.TagType == 8 && at.SoundFormat == 10) {
 				if (m_pFile->BitRead(8) != 1) goto NextTag;
 			}
 			__int64 dataSize = next - m_pFile->GetPos();

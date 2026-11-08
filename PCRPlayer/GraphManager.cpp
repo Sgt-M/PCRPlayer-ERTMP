@@ -435,6 +435,10 @@ bool GraphManager::renderEx(
 	}
 
 
+	//[pcr-ertmp] explicit decoder fallback filter, connected when FilterMapper
+	//cannot map the enhanced-RTMP fourcc subtypes ('HEVC','hvc1','av01',...)
+	CComPtr<IBaseFilter> lavVideo;
+
 	if (source_->type() == SOURCE_TYPE_FLV)
 	{
 		splitter_ = CComQIPtr<IBaseFilter>(new CFLVSplitterFilter(NULL, &hr, log_));
@@ -466,6 +470,79 @@ bool GraphManager::renderEx(
 			graph_->RemoveFilter(splitter_);
 			splitter_.Release();
 			return false;
+		}
+
+		//[pcr-ertmp] enhanced-RTMP: the FilterMapper has no registration for the
+		//new fourcc subtypes, so when the smart connect left the renderer
+		//unattached, instantiate LAV Video Decoder explicitly and wire
+		//splitter(video) -> LAV -> renderer by hand.
+		{
+			CComPtr<IPin> probePin;
+			findConnectTo(*video_, probePin, PINDIR_INPUT);
+			if (!probePin && splitter_)
+			{
+				addLog(L"GraphManager: video unmapped, trying explicit LAV Video Decoder");
+				static const CLSID CLSID_LAVVideo =
+					{ 0xEE30215D, 0x164F, 0x4A92, { 0xA4, 0xEB, 0x9D, 0x4C, 0x13, 0x39, 0x0F, 0x9F } };
+				bool lavOk = false;
+				if (SUCCEEDED(lavVideo.CoCreateInstance(CLSID_LAVVideo, NULL, CLSCTX_INPROC_SERVER)))
+				{
+					graph_->AddFilter(lavVideo, L"LAV Video Decoder");
+
+					CComPtr<IPin> lavIn;
+					{
+						CComPtr<IEnumPins> ep;
+						if (SUCCEEDED(lavVideo->EnumPins(&ep))) {
+							IPin* p = NULL;
+							while (ep->Next(1, &p, NULL) == S_OK) {
+								PIN_DIRECTION dir; p->QueryDirection(&dir);
+								if (dir == PINDIR_INPUT) { lavIn = p; p->Release(); break; }
+								p->Release();
+							}
+						}
+					}
+
+					if (lavIn) {
+						CComPtr<IEnumPins> ep;
+						if (SUCCEEDED(splitter_->EnumPins(&ep))) {
+							IPin* p = NULL;
+							while (!lavOk && ep->Next(1, &p, NULL) == S_OK) {
+								PIN_DIRECTION dir; p->QueryDirection(&dir);
+								if (dir == PINDIR_OUTPUT) {
+									CComPtr<IEnumMediaTypes> emt;
+									if (SUCCEEDED(p->EnumMediaTypes(&emt))) {
+										AM_MEDIA_TYPE* mt = NULL;
+										while (!lavOk && emt->Next(1, &mt, NULL) == S_OK) {
+											if (mt) {
+												if (mt->majortype == MEDIATYPE_Video) {
+													if (SUCCEEDED(graph_->ConnectDirect(p, lavIn, mt))) {
+														lavOk = true;
+														addLog(L"ertmp: lav connected with sub=%.4s", (LPCWSTR)&mt->subtype.Data1);
+													}
+												}
+												DeleteMediaType(mt);
+											}
+										}
+									}
+								}
+								p->Release();
+							}
+						}
+					}
+
+					if (lavOk) {
+						hr = cgb->RenderStream(NULL, &MEDIATYPE_Video, lavVideo, NULL, *video_);
+						addLog(L"GraphManager: explicit LAV chain hr=0x%08X", hr);
+						if (FAILED(hr)) {
+							graph_->RemoveFilter(lavVideo);
+							lavVideo.Release();
+						}
+					} else {
+						graph_->RemoveFilter(lavVideo);
+						lavVideo.Release();
+					}
+				}
+			}
 		}
 	}
 	else
@@ -541,6 +618,7 @@ bool GraphManager::renderEx(
 			graph_->RemoveFilter(splitter_);
 			splitter_.Release();
 		}
+		if (lavVideo) { graph_->RemoveFilter(lavVideo); lavVideo.Release(); }
 		if (decVideo_)
 		{
 			graph_->RemoveFilter(decVideo_);
@@ -575,6 +653,7 @@ bool GraphManager::renderEx(
 			graph_->RemoveFilter(splitter_);
 			splitter_.Release();
 		}
+		if (lavVideo) { graph_->RemoveFilter(lavVideo); lavVideo.Release(); }
 		if (decVideo_)
 		{
 			graph_->RemoveFilter(decVideo_);
