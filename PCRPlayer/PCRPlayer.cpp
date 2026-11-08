@@ -4,6 +4,7 @@
 
 #include "stdafx.h"
 #include "PCRPlayer.h"
+#include "PcrFilter.h"
 #include "PcrWeb.h"
 
 
@@ -56,6 +57,8 @@ BOOL CMainApp::InitInstance()
 
 	//[pcr-web] WebView2 loader requires OLE/COM on the UI thread
 	if (!AfxOleInit()) { return FALSE; }
+	//[pcr-video] register bundled filters (LAV / MPC Video Renderer) per-user
+	pcrfilters::EnsureRegistered();
 	//[pcr-probe] PCR_EARLY: pre-spawn environment on web thread at startup
 	if (::GetEnvironmentVariableW(L"PCR_EARLY", NULL, 0) > 0) {
 		pcrweb::RequestEnvironment([](ICoreWebView2Environment* e) {

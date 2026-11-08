@@ -123,6 +123,12 @@
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(SolutionDir)third_party\webview2\build\native\include;$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
+    <PostBuildEvent>
+      <Message>copy bundled filters</Message>
+      <Command>if not exist "$(OutDir)filters\x64" mkdir "$(OutDir)filters\x64"
+if not exist "$(OutDir)filters\x86" mkdir "$(OutDir)filters\x86"
+if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x64\*" "$(OutDir)filters\x64\" &gt; nul ) else ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x86\*" "$(OutDir)filters\x86\" &gt; nul )</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -146,6 +152,12 @@
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(SolutionDir)third_party\webview2\build\native\include;$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
+    <PostBuildEvent>
+      <Message>copy bundled filters</Message>
+      <Command>if not exist "$(OutDir)filters\x64" mkdir "$(OutDir)filters\x64"
+if not exist "$(OutDir)filters\x86" mkdir "$(OutDir)filters\x86"
+if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x64\*" "$(OutDir)filters\x64\" &gt; nul ) else ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x86\*" "$(OutDir)filters\x86\" &gt; nul )</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
@@ -177,6 +189,12 @@
     <Manifest>
       <EnableDpiAwareness>true</EnableDpiAwareness>
     </Manifest>
+    <PostBuildEvent>
+      <Message>copy bundled filters</Message>
+      <Command>if not exist "$(OutDir)filters\x64" mkdir "$(OutDir)filters\x64"
+if not exist "$(OutDir)filters\x86" mkdir "$(OutDir)filters\x86"
+if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x64\*" "$(OutDir)filters\x64\" &gt; nul ) else ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x86\*" "$(OutDir)filters\x86\" &gt; nul )</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -204,6 +222,12 @@
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(SolutionDir)third_party\webview2\build\native\include;$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
+    <PostBuildEvent>
+      <Message>copy bundled filters</Message>
+      <Command>if not exist "$(OutDir)filters\x64" mkdir "$(OutDir)filters\x64"
+if not exist "$(OutDir)filters\x86" mkdir "$(OutDir)filters\x86"
+if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x64\*" "$(OutDir)filters\x64\" &gt; nul ) else ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\x86\*" "$(OutDir)filters\x86\" &gt; nul )</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="ReadMe.txt" />
@@ -257,6 +281,7 @@
     <ClInclude Include="DetailTypeWMVDlg.h" />
     <ClInclude Include="DHtmlUtl.h" />
     <ClInclude Include="PcrWeb.h" />
+    <ClInclude Include="PcrFilter.h" />
     <ClInclude Include="DisplayInformationDlg.h" />
     <ClInclude Include="DisplayInformationGeneralDlg.h" />
     <ClInclude Include="DisplayResColor3Dlg.h" />
@@ -453,6 +478,7 @@
     <ClCompile Include="DetailTypeWMVDlg.cpp" />
     <ClCompile Include="DHtmlUtl.cpp" />
     <ClCompile Include="PcrWeb.cpp" />
+    <ClCompile Include="PcrFilter.cpp" />
     <ClCompile Include="DisplayInformationDlg.cpp" />
     <ClCompile Include="DisplayInformationGeneralDlg.cpp" />
     <ClCompile Include="DisplayResColor3Dlg.cpp" />
