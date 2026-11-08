@@ -162,8 +162,12 @@ BOOL CDetailDecoderDlg::OnInitDialog()
 	m_xcCmbRenderer.AddString(L"EVR (カスタムプレゼンタ)");
 	{
 		int mpcIndex = m_xcCmbRenderer.AddString(L"MPC Video Renderer");
-		CComPtr<IBaseFilter> probe;
-		BOOL available = SUCCEEDED(probe.CoCreateInstance(dsp::CLSID_PcrMpcVideoRenderer, NULL, CLSCTX_INPROC_SERVER)) && probe ? TRUE : FALSE;
+		//[pcr-video] registry presence check (lightweight; CoCreateInstance
+		//loads DirectX code = seconds of UI stall on this dialog)
+		HKEY hKey = NULL;
+		BOOL available = (RegOpenKeyExW(HKEY_CLASSES_ROOT,
+			L"CLSID\\{71F080AA-8661-4093-B15E-4F6903E77D0A}\\InprocServer32", 0, KEY_READ, &hKey) == ERROR_SUCCESS);
+		if (hKey) { RegCloseKey(hKey); }
 		if (!available) {
 			m_xcCmbRenderer.DeleteString(mpcIndex);
 			if (decoder_.renderer != 0) { decoder_.renderer = 0; }

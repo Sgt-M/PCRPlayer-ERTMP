@@ -514,6 +514,15 @@ bool MpcVideoRenderer::addToGraph(CComPtr<IGraphBuilder>& graph, HWND hwnd)
 
 	graph->AddFilter(render_, L"MPC Video Renderer");
 
+	//[pcr-video] MPC-HC/BE hosts set these before embedding: lessRedraws stops
+	//the synchronous forced Redraw() behind the renderer lock on every
+	//IVideoWindow call, which otherwise stalls the UI thread (freeze feel).
+	CComQIPtr<IExFilterConfigPcr> cfg = render_;
+	if (cfg) {
+		cfg->Flt_SetBool("lessRedraws", true);
+		cfg->Flt_SetBool("d3dFullscreenControl", true);
+	}
+
 	win_ = render_;
 	if (!win_) { return false; }
 
@@ -549,9 +558,10 @@ bool MpcVideoRenderer::setVideoPosition(RECT& dst)
 {
 	if (!win_) { return false; }
 	int w = dst.right - dst.left, h = dst.bottom - dst.top;
+	if (::EqualRect(&lastdst_, &dst)) { return true; }	//[pcr-video] no-op resize storm guard
 	lastdst_ = dst;
-	//[pcr-video] MPC VR early-returns on an unchanged window rect, so always
-	//push both the window rect and the video (destination) rect together.
+	//[pcr-video] MPC VR needs both rects pushed together (window rect calls
+	//early-return when unchanged). lessRedraws above keeps this off the lock.
 	HRESULT hr = win_->SetWindowPosition(dst.left, dst.top, w, h);
 	if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w, h); }
 	return SUCCEEDED(hr);

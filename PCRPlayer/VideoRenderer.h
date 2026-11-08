@@ -149,6 +149,26 @@ private:
 
 
 //[pcr-video] MPC Video Renderer (external DShow filter, D3D11). embedded via IVideoWindow.
+//[pcr-video] MPC-BE/MPC-HC common filter-config interface (minimal decl; the
+//IID is from Aleksoid1978/VideoRenderer Include/FilterInterfaces.h). Used to
+//set "lessRedraws": without it MPC VR runs a synchronous Render() on the
+//renderer lock for every window position/size change = UI-thread stalls.
+interface __declspec(uuid("37CBDF10-D65E-4E5A-8F37-40E0C8EA1695")) IExFilterConfigPcr : public IUnknown
+{
+	STDMETHOD(Flt_GetBool  )(LPCSTR field, bool    *value) PURE;
+	STDMETHOD(Flt_GetInt   )(LPCSTR field, int     *value) PURE;
+	STDMETHOD(Flt_GetInt64 )(LPCSTR field, __int64 *value) PURE;
+	STDMETHOD(Flt_GetDouble)(LPCSTR field, double  *value) PURE;
+	STDMETHOD(Flt_GetString)(LPCSTR field, LPWSTR  *value, unsigned *chars) PURE;
+	STDMETHOD(Flt_GetBin   )(LPCSTR field, LPVOID  *value, unsigned *size ) PURE;
+	STDMETHOD(Flt_SetBool  )(LPCSTR field, bool    value) PURE;
+	STDMETHOD(Flt_SetInt   )(LPCSTR field, int     value) PURE;
+	STDMETHOD(Flt_SetInt64 )(LPCSTR field, __int64 value) PURE;
+	STDMETHOD(Flt_SetDouble)(LPCSTR field, double  value) PURE;
+	STDMETHOD(Flt_SetString)(LPCSTR field, LPWSTR  value, int chars) PURE;
+	STDMETHOD(Flt_SetBin   )(LPCSTR field, LPVOID  value, int size ) PURE;
+};
+
 //[pcr-video] CLSID of the MPC Video Renderer filter (registered by the app or user)
 extern const CLSID CLSID_PcrMpcVideoRenderer;
 
