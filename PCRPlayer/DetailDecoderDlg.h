@@ -40,6 +40,7 @@ public:
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
 
 	afx_msg void OnBnClickedCheckDxva2();
+	afx_msg void OnCbnSelchangeComboRenderer();
 
 	void DispInfo(NMHDR *pNMHDR, LRESULT *pResult, std::vector<sl::DecoderInfo>& list);
 	afx_msg void OnLvnGetdispinfoListVideo(NMHDR *pNMHDR, LRESULT *pResult);
@@ -70,6 +71,7 @@ public:
 	std::vector<sl::DecoderInfo> audio_;
 
 	CButton m_xcCheckDXVA2;
+	CComboBox m_xcCmbRenderer;
 	CComboBox m_xcCmbVideo;
 	CComboBox m_xcCmbAudio;
 	CCustomListCtrl m_xcListVideo;

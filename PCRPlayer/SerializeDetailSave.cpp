@@ -164,6 +164,7 @@ void put(XmlParser& root, const DetailConfig& detail)
 
 	p = root.put(L"detail.decoder");
 	p.put(L"dxva2", detail.decoder.dxva2);
+	p.put(L"renderer", detail.decoder.renderer); //[pcr-video]
 
 	p = root.put(L"detail.video");
 	put(p, detail.video);

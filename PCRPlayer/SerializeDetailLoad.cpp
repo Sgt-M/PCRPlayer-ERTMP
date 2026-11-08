@@ -170,6 +170,7 @@ void get(const XmlParser& root, DetailConfig& detail)
 
 	p = root.get(L"detail.decoder");
 	p.get(L"dxva2", detail.decoder.dxva2);
+	p.get(L"renderer", detail.decoder.renderer); //[pcr-video]
 
 	p = root.get(L"detail.video");
 	get(p, detail.video);

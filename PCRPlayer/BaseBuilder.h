@@ -161,9 +161,11 @@ struct TypeControl {
 struct DecoderControl {
 	DecoderControl()
 		: dxva2(true)
+		, renderer(0)
 	{}
 
 	bool dxva2; // DXVA2‚ð—LŒø‚É‚·‚é
+	int renderer; //[pcr-video] 0=EVRCustom(Šù’è) 1=MPC Video Renderer
 };
 
 

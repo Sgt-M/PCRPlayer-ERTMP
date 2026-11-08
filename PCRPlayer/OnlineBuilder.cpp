@@ -40,7 +40,7 @@ bool OnlineBuilder::render(HWND hwnd, UINT msg, const std::wstring& path)
 
 		// FLV
 		source.reset(new URLBufferSource(network.reader.userAgent, network.reader.timeout));
-		video.reset(new EVRCustom(decoder.dxva2));
+		video.reset(createVideoRenderer(decoder.dxva2, decoder.renderer));
 		audio.reset(new DSR());
 		if (graph_.renderEx(hwnd, path, source, video, audio, decoderSet, true))
 		{
@@ -59,7 +59,7 @@ bool OnlineBuilder::render(HWND hwnd, UINT msg, const std::wstring& path)
 
 		// WMV
 		source.reset(new WMASFSource());
-		video.reset(new EVRCustom(decoder.dxva2));
+		video.reset(createVideoRenderer(decoder.dxva2, decoder.renderer));
 		audio.reset(new DSR());
 		if (graph_.render(hwnd, path, source, video, audio, decoderSet))
 		{

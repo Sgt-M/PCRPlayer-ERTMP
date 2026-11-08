@@ -148,6 +148,35 @@ private:
 };
 
 
+//[pcr-video] MPC Video Renderer (external DShow filter, D3D11). embedded via IVideoWindow.
+//[pcr-video] CLSID of the MPC Video Renderer filter (registered by the app or user)
+extern const CLSID CLSID_PcrMpcVideoRenderer;
+
+class MpcVideoRenderer : public IBaseVideoRenderer {
+	CComPtr<IVideoWindow> win_;
+	CComPtr<IBasicVideo> bvideo_;   //[pcr-video] render rect (MPC VR needs IBasicVideo)
+	RECT lastdst_;
+
+public:
+	MpcVideoRenderer() {}
+	~MpcVideoRenderer() {}
+
+	operator IBaseFilter*() { return render_; }
+	operator CComPtr<IBaseFilter>&() { return render_; }
+	void detach() { render_.Detach(); win_.Detach(); bvideo_.Detach(); }
+	bool addToGraph(CComPtr<IGraphBuilder>& graph, HWND hwnd);
+	bool repaint(HDC hdc);
+	bool setVideoPosition(RECT& dst);
+	bool displayModeChanged();
+	bool getNativeVideoSize(SIZE& size);
+};
+
+
+//[pcr-video] renderer factory: 1=MPC Video Renderer (falls back to EVRCustom when
+//the filter is not installed), 0=EVRCustom as before.
+IBaseVideoRenderer* createVideoRenderer(bool dxva2, int renderer);
+
+
 class EVRCustom : public IBaseVideoRenderer {
 	CComPtr<IMFVideoDisplayControl> control_;
 	CComPtr<ICustomRenderProp> custom_;

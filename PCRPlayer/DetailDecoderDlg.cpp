@@ -2,6 +2,7 @@
 //
 
 #include "stdafx.h"
+#include "VideoRenderer.h"
 #include "PCRPlayer.h"
 #include "DetailDecoderDlg.h"
 //#include "afxdialogex.h"
@@ -25,6 +26,7 @@ void CDetailDecoderDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialog::DoDataExchange(pDX);
 	DDX_Control(pDX, IDC_CHECK_DXVA2, m_xcCheckDXVA2);
+	DDX_Control(pDX, IDC_COMBO_RENDERER, m_xcCmbRenderer);
 	DDX_Control(pDX, IDC_CMB_VIDEO, m_xcCmbVideo);
 	DDX_Control(pDX, IDC_CMB_AUDIO, m_xcCmbAudio);
 	DDX_Control(pDX, IDC_LIST_VIDEO, m_xcListVideo);
@@ -34,6 +36,7 @@ void CDetailDecoderDlg::DoDataExchange(CDataExchange* pDX)
 
 BEGIN_MESSAGE_MAP(CDetailDecoderDlg, CDialog)
 	ON_BN_CLICKED(IDC_CHECK_DXVA2, &CDetailDecoderDlg::OnBnClickedCheckDxva2)
+	ON_CBN_SELCHANGE(IDC_COMBO_RENDERER, &CDetailDecoderDlg::OnCbnSelchangeComboRenderer)
 	ON_NOTIFY(LVN_GETDISPINFO, IDC_LIST_VIDEO, &CDetailDecoderDlg::OnLvnGetdispinfoListVideo)
 	ON_NOTIFY(LVN_GETDISPINFO, IDC_LIST_AUDIO, &CDetailDecoderDlg::OnLvnGetdispinfoListAudio)
 	ON_NOTIFY(NM_CLICK, IDC_LIST_VIDEO, &CDetailDecoderDlg::OnNMClickListVideo)
@@ -155,6 +158,19 @@ BOOL CDetailDecoderDlg::OnInitDialog()
 	// DXVA2
 	m_xcCheckDXVA2.SetCheck(decoder_.dxva2 ? BST_CHECKED : BST_UNCHECKED);
 
+	//[pcr-video] ビデオレンダラ選択 (既定: EVR / 選択可: MPC Video Renderer)
+	m_xcCmbRenderer.AddString(L"EVR (カスタムプレゼンタ)");
+	{
+		int mpcIndex = m_xcCmbRenderer.AddString(L"MPC Video Renderer");
+		CComPtr<IBaseFilter> probe;
+		BOOL available = SUCCEEDED(probe.CoCreateInstance(dsp::CLSID_PcrMpcVideoRenderer, NULL, CLSCTX_INPROC_SERVER)) && probe ? TRUE : FALSE;
+		if (!available) {
+			m_xcCmbRenderer.DeleteString(mpcIndex);
+			if (decoder_.renderer != 0) { decoder_.renderer = 0; }
+		}
+	}
+	m_xcCmbRenderer.SetCurSel(decoder_.renderer == 1 ? 1 : 0);
+
 	// コンボボックス
 	data_.clear();
 	EnumFilterMoniker(data_);
@@ -214,6 +230,12 @@ BOOL CDetailDecoderDlg::PreTranslateMessage(MSG* pMsg)
 }
 
 
+
+//[pcr-video] ビデオレンダラ切り替え
+void CDetailDecoderDlg::OnCbnSelchangeComboRenderer()
+{
+	decoder_.renderer = (m_xcCmbRenderer.GetCurSel() == 1) ? 1 : 0;
+}
 
 void CDetailDecoderDlg::OnBnClickedCheckDxva2()
 {

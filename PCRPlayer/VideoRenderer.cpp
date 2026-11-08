@@ -494,4 +494,95 @@ bool EVRCustom::getService(const CComPtr<IBaseFilter>& evr, REFGUID guidService,
 }
 
 
+
+//******************************************************************************
+//[pcr-video] MPC Video Renderer: standard DShow renderer embedded as a child
+//window through IVideoWindow (same contract MPC-HC/BE uses). No custom
+//presenter; MPC VR does its own D3D11 rendering / aspect handling.
+
+const CLSID CLSID_PcrMpcVideoRenderer =
+	{0x71f080aa, 0x8661, 0x4093, {0xb1, 0x5e, 0x4f, 0x69, 0x03, 0xe7, 0x7d, 0x0a}};
+
+bool MpcVideoRenderer::addToGraph(CComPtr<IGraphBuilder>& graph, HWND hwnd)
+{
+	if (graph == NULL || hwnd == NULL) { return false; }
+
+	hwnd_ = hwnd;
+
+	HRESULT hr = render_.CoCreateInstance(CLSID_PcrMpcVideoRenderer, NULL, CLSCTX_INPROC_SERVER);
+	if (FAILED(hr) || !render_) { return false; }
+
+	graph->AddFilter(render_, L"MPC Video Renderer");
+
+	win_ = render_;
+	if (!win_) { return false; }
+
+	RECT rc; ::GetClientRect(hwnd, &rc);
+	int w = rc.right - rc.left, h = rc.bottom - rc.top;
+
+	//[pcr-video] verified MPC VR sequence:
+	//  1) SetWindowPosition BEFORE put_Owner - Init() creates the child window
+	//     from the stored m_windowRect (CW_USEDEFAULT otherwise).
+	//  2) IBasicVideo::SetDestinationPosition - fills m_videoRect; when it stays
+	//     null MPC VR presents an empty 0x0 target (black screen with a running
+	//     graph and counting Frames stats). MPC-BE's presenter calls both.
+	win_->SetWindowPosition(0, 0, w, h);
+	win_->put_Owner((OAHWND)hwnd);                   // owner = video pane
+	win_->put_MessageDrain((OAHWND)hwnd);
+	win_->put_WindowStyle(WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
+	win_->put_Visible(1L); // OA_TRUE
+
+	bvideo_ = render_;
+	if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w, h); }
+	lastdst_.left = 0; lastdst_.top = 0; lastdst_.right = w; lastdst_.bottom = h;
+
+	return true;
+}
+
+bool MpcVideoRenderer::repaint(HDC hdc)
+{
+	//[pcr-video] child-window renderer paints itself; nothing to do
+	return false;
+}
+
+bool MpcVideoRenderer::setVideoPosition(RECT& dst)
+{
+	if (!win_) { return false; }
+	int w = dst.right - dst.left, h = dst.bottom - dst.top;
+	lastdst_ = dst;
+	//[pcr-video] MPC VR early-returns on an unchanged window rect, so always
+	//push both the window rect and the video (destination) rect together.
+	HRESULT hr = win_->SetWindowPosition(dst.left, dst.top, w, h);
+	if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w, h); }
+	return SUCCEEDED(hr);
+}
+
+bool MpcVideoRenderer::displayModeChanged()
+{
+	//[pcr-video] MPC VR tracks display changes itself (child window + own
+	//drain messages); nothing to forward through IVideoWindow.
+	return true;
+}
+
+bool MpcVideoRenderer::getNativeVideoSize(SIZE& size)
+{
+	//[pcr-video] MPC VR manages aspect internally; no native-size API
+	return false;
+}
+
+IBaseVideoRenderer* createVideoRenderer(bool dxva2, int renderer)
+{
+	if (renderer == 1)
+	{
+		//[pcr-video] probe first: MPC VR must be registered (the bundled
+		// registration runs at startup, or the user installed it itself).
+		CComPtr<IBaseFilter> probe;
+		if (SUCCEEDED(probe.CoCreateInstance(CLSID_PcrMpcVideoRenderer, NULL, CLSCTX_INPROC_SERVER)) && probe)
+		{
+			return new MpcVideoRenderer();
+		}
+	}
+	return new EVRCustom(dxva2);
+}
+
 }
