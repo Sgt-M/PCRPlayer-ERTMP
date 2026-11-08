@@ -583,8 +583,16 @@ bool MpcVideoRenderer::displayModeChanged()
 
 bool MpcVideoRenderer::getNativeVideoSize(SIZE& size)
 {
-	//[pcr-video] MPC VR manages aspect internally; no native-size API
-	return false;
+	//[pcr-video] needed by ratio-fixed mouse sizing (GlobalValues::getAspect):
+	//EVR asks IMFVideoDisplayControl; MPC VR exposes the current media size via
+	//IBasicVideo::GetVideoSize.
+	CComQIPtr<IBasicVideo> bv = render_;
+	if (!bv) { return false; }
+	long w = 0, h = 0;
+	if (FAILED(bv->GetVideoSize(&w, &h)) || w <= 0 || h <= 0) { return false; }
+	size.cx = w;
+	size.cy = h;
+	return true;
 }
 
 IBaseVideoRenderer* createVideoRenderer(bool dxva2, int renderer)
