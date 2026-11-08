@@ -176,9 +176,11 @@ class MpcVideoRenderer : public IBaseVideoRenderer {
 	CComPtr<IVideoWindow> win_;
 	CComPtr<IBasicVideo> bvideo_;   //[pcr-video] render rect (MPC VR needs IBasicVideo)
 	RECT lastdst_;
+	HWND embedHwnd_;                 //[pcr-video] deferred embed (UI thread only)
+	bool embedded_;
 
 public:
-	MpcVideoRenderer() {}
+	MpcVideoRenderer() : embedHwnd_(NULL), embedded_(false) { ::SetRectEmpty(&lastdst_); }
 	~MpcVideoRenderer() {}
 
 	operator IBaseFilter*() { return render_; }

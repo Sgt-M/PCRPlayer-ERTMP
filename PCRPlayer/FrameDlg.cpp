@@ -110,6 +110,15 @@ BOOL CFrameDlg::OnEraseBkgnd(CDC* pDC)
 void CFrameDlg::OnPaint()
 {
 	CPaintDC dc(this); // device context for painting
+	//[pcr-video] child-window renderers (MPC VR) embed lazily here: this runs on
+	//the window's UI thread (addToGraph runs on the graph-build thread and must
+	//not create MPC VR's child window there). Cheap no-op after the first embed.
+	{
+		CRect rcEmbed;
+		GetClientRect(&rcEmbed);
+		gl_.player.setVideoPosition(rcEmbed);
+	}
+
 					   // TODO: ここにメッセージ ハンドラー コードを追加します。
 					   // 描画メッセージで CDialog::OnPaint() を呼び出さないでください。
 

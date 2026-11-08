@@ -514,37 +514,23 @@ bool MpcVideoRenderer::addToGraph(CComPtr<IGraphBuilder>& graph, HWND hwnd)
 
 	graph->AddFilter(render_, L"MPC Video Renderer");
 
-	//[pcr-video] MPC-HC/BE hosts set these before embedding: lessRedraws stops
-	//the synchronous forced Redraw() behind the renderer lock on every
-	//IVideoWindow call, which otherwise stalls the UI thread (freeze feel).
+	//[pcr-video] MPC-HC/BE host settings: lessRedraws stops the synchronous
+	//forced Redraw() behind the renderer lock on every IVideoWindow call.
 	CComQIPtr<IExFilterConfigPcr> cfg = render_;
 	if (cfg) {
 		cfg->Flt_SetBool("lessRedraws", true);
 		cfg->Flt_SetBool("d3dFullscreenControl", true);
 	}
 
-	win_ = render_;
-	if (!win_) { return false; }
-
-	RECT rc; ::GetClientRect(hwnd, &rc);
-	int w = rc.right - rc.left, h = rc.bottom - rc.top;
-
-	//[pcr-video] verified MPC VR sequence:
-	//  1) SetWindowPosition BEFORE put_Owner - Init() creates the child window
-	//     from the stored m_windowRect (CW_USEDEFAULT otherwise).
-	//  2) IBasicVideo::SetDestinationPosition - fills m_videoRect; when it stays
-	//     null MPC VR presents an empty 0x0 target (black screen with a running
-	//     graph and counting Frames stats). MPC-BE's presenter calls both.
-	win_->SetWindowPosition(0, 0, w, h);
-	win_->put_Owner((OAHWND)hwnd);                   // owner = video pane
-	win_->put_MessageDrain((OAHWND)hwnd);
-	win_->put_WindowStyle(WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
-	win_->put_Visible(1L); // OA_TRUE
-
-	bvideo_ = render_;
-	if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w, h); }
-	lastdst_.left = 0; lastdst_.top = 0; lastdst_.right = w; lastdst_.bottom = h;
-
+	//[pcr-video] IMPORTANT: do NOT call put_Owner/CreateWindow from this thread.
+	//addToGraph runs on the player's graph-build thread; MPC VR's Init() would
+	//create its child window on that thread under our UI-thread parent, and the
+	//resulting cross-thread SendMessage traffic deadlocks the UI thread while
+	//it waits for the build to finish (observed as "Not Responding" on stream
+	//start). The embed is deferred to setVideoPosition(), which MFC calls on
+	//the window's (UI) thread.
+	embedHwnd_ = hwnd;
+	embedded_ = false;
 	return true;
 }
 
@@ -556,12 +542,33 @@ bool MpcVideoRenderer::repaint(HDC hdc)
 
 bool MpcVideoRenderer::setVideoPosition(RECT& dst)
 {
-	if (!win_) { return false; }
+	if (!render_) { return false; }
+
+	//[pcr-video] first call performs the embed; MFC routes this through the
+	//video window (UI thread) so MPC VR's child window is created on the same
+	//thread as its parent -> no cross-thread deadlock.
+	if (!embedded_) {
+		if (embedHwnd_ == NULL || !::IsWindow(embedHwnd_)) { return false; }
+		RECT rc; ::GetClientRect(embedHwnd_, &rc);
+		int w0 = rc.right - rc.left, h0 = rc.bottom - rc.top;
+		win_ = render_;
+		if (!win_) { return false; }
+		win_->SetWindowPosition(0, 0, w0, h0);   // BEFORE put_Owner (see notes)
+		win_->put_Owner((OAHWND)embedHwnd_);
+		win_->put_MessageDrain((OAHWND)embedHwnd_);
+		win_->put_WindowStyle(WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
+		win_->put_Visible(1L); // OA_TRUE
+		bvideo_ = render_;
+		if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w0, h0); }
+		embedded_ = true;
+		::SetRect(&lastdst_, 0, 0, w0, h0);
+		return true;
+	}
+
 	int w = dst.right - dst.left, h = dst.bottom - dst.top;
-	if (::EqualRect(&lastdst_, &dst)) { return true; }	//[pcr-video] no-op resize storm guard
+	if (::EqualRect(&lastdst_, &dst)) { return true; }
 	lastdst_ = dst;
-	//[pcr-video] MPC VR needs both rects pushed together (window rect calls
-	//early-return when unchanged). lessRedraws above keeps this off the lock.
+	//[pcr-video] push window rect and video (destination) rect together.
 	HRESULT hr = win_->SetWindowPosition(dst.left, dst.top, w, h);
 	if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w, h); }
 	return SUCCEEDED(hr);
