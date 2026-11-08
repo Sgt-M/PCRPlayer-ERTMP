@@ -397,7 +397,16 @@ BOOL CMainDlg::PreTranslateMessage(MSG* pMsg)
 					gl_.value.operation.mouse.offline.invert;
 
 				HWND hwnd = wnd->GetSafeHwnd();
-				if (hwnd == GetSafeHwnd() || hwnd == layout_.GetSafeMainHwnd() || hwnd == box_.GetSafeHwnd())
+				//[pcr-video] MPC VR renders into its own child window hosted by the
+				//video dialog, so WindowFromPoint() returns that child over the video
+				//area; walk the parent chain to keep wheel-over-video (= volume etc.)
+				//working like with the in-process EVR presenter.
+				bool onVideo = false;
+				for (HWND v = hwnd; v != NULL && !onVideo; v = ::GetParent(v))
+				{
+					onVideo = (v == layout_.GetSafeMainHwnd());
+				}
+				if (hwnd == GetSafeHwnd() || onVideo || hwnd == box_.GetSafeHwnd())
 				{// âÊñ è„
 					if (GetAsyncKeyState(VK_RBUTTON) & 0x8000)
 					{
