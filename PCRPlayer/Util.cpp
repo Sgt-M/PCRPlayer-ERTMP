@@ -690,8 +690,12 @@ void inflateWindowRect(RECT& src, bool title, bool frame)
 	if (title && frame)
 	{ // フレーム/タイトルバー
 		int cyCaption = GetSystemMetrics(SM_CYCAPTION);
-		int cxFrame = GetSystemMetrics(SM_CXFRAME);
-		int cyFrame = GetSystemMetrics(SM_CYFRAME);
+		//[pcr-video] Win10+/11: the resize border is SM_CXFRAME plus the
+		// SM_CXPADDEDBORDER padding (invisible but inside the client area).
+		// Omitting it made the client (video) rect 8px smaller than the
+		// requested playback size (480x270 -> 472x262).
+		int cxFrame = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+		int cyFrame = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
 
 		rc.InflateRect(0, cyCaption, 0, 0);
 		rc.InflateRect(cxFrame, cyFrame);
@@ -711,8 +715,8 @@ void inflateWindowRect(RECT& src, bool title, bool frame)
 	}
 	else if (frame)
 	{ // フレーム
-		int cxFrame = GetSystemMetrics(SM_CXFRAME);
-		int cyFrame = GetSystemMetrics(SM_CYFRAME);
+		int cxFrame = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER); //[pcr-video]
+		int cyFrame = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER); //[pcr-video]
 		int cxBorder = GetSystemMetrics(SM_CXBORDER);
 		int cyBorder = GetSystemMetrics(SM_CYBORDER);
 
@@ -731,8 +735,8 @@ void deflateWindowRect(RECT& src, bool title, bool frame)
 	if (title && frame)
 	{ // フレーム/タイトルバー
 		int cyCaption = GetSystemMetrics(SM_CYCAPTION);
-		int cxFrame = GetSystemMetrics(SM_CXFRAME);
-		int cyFrame = GetSystemMetrics(SM_CYFRAME);
+		int cxFrame = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER); //[pcr-video] must match inflateWindowRect
+		int cyFrame = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER); //[pcr-video]
 
 		rc.DeflateRect(0, cyCaption, 0, 0);
 		rc.DeflateRect(cxFrame, cyFrame);
@@ -752,8 +756,8 @@ void deflateWindowRect(RECT& src, bool title, bool frame)
 	}
 	else if (frame)
 	{ // フレーム
-		int cxFrame = GetSystemMetrics(SM_CXFRAME);
-		int cyFrame = GetSystemMetrics(SM_CYFRAME);
+		int cxFrame = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER); //[pcr-video] must match inflateWindowRect
+		int cyFrame = GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER); //[pcr-video]
 		int cxBorder = GetSystemMetrics(SM_CXBORDER);
 		int cyBorder = GetSystemMetrics(SM_CYBORDER);
 
