@@ -1,5 +1,5 @@
-// ExtractBrowserDlg.cpp : 実装ファイル
-//
+// ExtractBrowserDlg.cpp : implementation file
+//[pcr-web] WebView2 based implementation
 
 #include "stdafx.h"
 #include "PCRPlayer.h"
@@ -12,7 +12,7 @@ enum TIMER_ID {
 };
 
 
-// CExtractBrowserDlg ダイアログ
+// CExtractBrowserDlg dialog
 
 IMPLEMENT_DYNCREATE(CExtractBrowserDlg, CCustomDHtmlDialog)
 
@@ -28,7 +28,7 @@ CExtractBrowserDlg::~CExtractBrowserDlg()
 	gl_.callback.extract.pop(this);
 }
 
-bool CExtractBrowserDlg::replaceText(std::wstring& text, const std::wstring& header, const::std::wstring& replace)
+bool CExtractBrowserDlg::replaceText(std::wstring& text, const std::wstring& header, const std::wstring& replace)
 {
 	if (text.find(header) == 0)
 	{
@@ -45,33 +45,33 @@ void CExtractBrowserDlg::setPaneText()
 	std::wstring word;
 	if (!this_.search.empty())
 	{
-		word = L"キーワード:\"" + this_.search + L"\"";
+		word = L"keyword:\"" + this_.search + L"\"";
 	}
 	else
 	{
 		std::wstring extract = this_.extract;
 		if (replaceText(extract, L"anchor:", L">>"))
 		{
-			word = L"抽出アンカー:\"" + extract + L"\"";
+			word = L"extract anchor:\"" + extract + L"\"";
 		}
 		else if (replaceText(extract, L"id:", L"ID:"))
 		{
-			word = L"抽出ID:\"" + extract + L"\"";
+			word = L"extract ID:\"" + extract + L"\"";
 		}
 		else if(replaceText(extract, L"ref:", L""))
 		{
-			word = L"参照レス番号:\"" + extract + L"\"";
+			word = L"ref res number:\"" + extract + L"\"";
 		}
 	}
 
 	CString str;
 	if (this_.count > 0)
 	{
-		str.Format(L"レス数:%d 抽出数:%d", this_.dat.size(), this_.count);
+		str.Format(L"posts:%d extract:%d", this_.dat.size(), this_.count);
 	}
 	else
 	{
-		str.Format(L"レス数:%d", this_.dat.size());
+		str.Format(L"posts:%d", this_.dat.size());
 	}
 
 	if (word.empty())
@@ -92,13 +92,13 @@ void CExtractBrowserDlg::setPaneText(bool read)
 	int per = 0;
 	if (read)
 	{
-		desc = L"読み込み中";
+		desc = L"loading";
 		int pos = (int)std::distance(this_.dat.begin(), this_.it);
 		per = (int)this_.dat.size() == 0 ? 100 : ((pos * 100) / (int)this_.dat.size());
 	}
 	else
 	{
-		desc = L"着色中";
+		desc = L"coloring";
 		per = this_.count == 0 ? 100 : ((this_.pos * 100) / this_.count);
 	}
 
@@ -117,7 +117,7 @@ void CExtractBrowserDlg::setPaneText(bool read)
 void CExtractBrowserDlg::setPaneTextNotify()
 {
 	if (!this_.status || !::IsWindow(this_.status->GetSafeHwnd())) { return; }
-	this_.status->SetPaneText(0, L"抽出元のスレッドが読み込まれていないためアンカーの抽出やポップアップ等が機能しません");
+	this_.status->SetPaneText(0, L"source thread not loaded: anchor extract and popups unavailable");
 }
 
 bool CExtractBrowserDlg::pageExtract()
@@ -125,10 +125,12 @@ bool CExtractBrowserDlg::pageExtract()
 	if (!this_.dhtml) { return false; }
 
 	std::set<int> set;
-	this_.dhtml->SearchParent(this_.search, [&](const CComPtr<IHTMLElement>& parent){
+	std::vector<std::wstring> ids;
+	//[pcr-web] parent res-id lookup through the JS bridge
+	if (this_.dhtml->SearchParentIds(this_.search, L"res:", ids))
+	{
 		std::wstring header = L"res:";
-		std::wstring id;
-		if (this_.dhtml->GetParentID(parent, header, id))
+		for (auto& id : ids)
 		{
 			if (id.size() > header.size())
 			{
@@ -140,7 +142,7 @@ bool CExtractBrowserDlg::pageExtract()
 				}
 			}
 		}
-	});
+	}
 
 	if (!set.empty())
 	{
@@ -167,18 +169,9 @@ void CExtractBrowserDlg::scrollIntoView(int res)
 {
 	CString anchor;
 	anchor.Format(L"res:%d", res);
-	CComPtr<IHTMLDocument2> doc2;
-	if (SUCCEEDED(this_.dhtml->GetDHtmlDocument(&doc2)))
+	if (this_.dhtml)
 	{
-		CComQIPtr<IHTMLDocument3> doc3(doc2);
-		if (doc3)
-		{
-			CComPtr<IHTMLElement> element;
-			if (SUCCEEDED(doc3->getElementById(CComBSTR(anchor), &element)) && element)
-			{
-				element->scrollIntoView(CComVariant(true));
-			}
-		}
+		this_.dhtml->ScrollIntoViewId(anchor.GetString());
 	}
 }
 
@@ -199,10 +192,10 @@ BOOL CExtractBrowserDlg::OnInitDialog()
 	std::wstring board, thread;
 	if (gl_.bbs.isThread() && gl_.bbs.getBoardTitle(board) && gl_.bbs.getThreadTitle(thread))
 	{
-		GetParent()->SetWindowText((L"抽出 【" + board + L"】 " + thread).c_str());
+		GetParent()->SetWindowText((L"extract [" + board + L"] " + thread).c_str());
 	}
 	setPaneText();
-	
+
 	DWORD time = GetTickCount();
 	if (!this_.search.empty())
 	{
@@ -216,25 +209,18 @@ BOOL CExtractBrowserDlg::OnInitDialog()
 	}
 	else if (this_.dhtml)
 	{
-		CComPtr<IHTMLTxtRange> range;
-		if (this_.dhtml->GetSelectedTxtRange(range))
-		{// 選択範囲
-			CComBSTR str;
-			if (SUCCEEDED(range->get_text(&str)))
-			{// 選択文字列
-				this_.search = CString(str).GetString();
-				if (!this_.search.empty())
-				{
-					pageExtract();
-				}
-			}
+		std::wstring str;
+		if (this_.dhtml->GetSelectedText(str) && !str.empty())
+		{// selection
+			this_.search = str;
+			pageExtract();
 		}
 		gl_.addLog(L"Extract time:%d", GetTickCount() - time);
 	}
 
 	ShowWindow(SW_SHOWNORMAL);
 
-	return TRUE;  // フォーカスをコントロールに設定した場合を除き、TRUE を返します。
+	return TRUE;
 }
 
 BEGIN_MESSAGE_MAP(CExtractBrowserDlg, CCustomDHtmlDialog)
@@ -247,15 +233,8 @@ BEGIN_MESSAGE_MAP(CExtractBrowserDlg, CCustomDHtmlDialog)
 	ON_WM_ERASEBKGND()
 END_MESSAGE_MAP()
 
-BEGIN_DHTML_EVENT_MAP(CExtractBrowserDlg)
-	DHTML_EVENT_TAG((DISPID)DISPID_HTMLELEMENTEVENTS_ONCLICK, _T("a"), OnAnchorMouseClick)
-	DHTML_EVENT_TAG((DISPID)DISPID_HTMLELEMENTEVENTS_ONMOUSEOVER, _T("a"), OnAnchorMouseOver)
-	DHTML_EVENT_TAG((DISPID)DISPID_HTMLELEMENTEVENTS_ONMOUSEOUT, _T("a"), OnAnchorMouseOut)
-END_DHTML_EVENT_MAP()
 
-
-
-// CExtractBrowserDlg メッセージ ハンドラー
+// CExtractBrowserDlg message handlers
 
 
 void CExtractBrowserDlg::OnCallbackExtract()
@@ -272,8 +251,7 @@ void CExtractBrowserDlg::OnCallbackExtract()
 	if (!gl_.bbs.getExtract(this_.dat)) { return; }
 	this_.it = this_.dat.begin();
 
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return; }
+	if (!IsWebReady()) { return; }
 
 	std::wstring noname;
 	gl_.bbs.getNoName(noname);
@@ -281,20 +259,18 @@ void CExtractBrowserDlg::OnCallbackExtract()
 
 	std::wstring html = skin.header(gl_.html.header) + L"\r\n";
 
-	doc2->write(utl::SafeArray(html));
+	LoadFromString(html);
 
 	SetTimer(TIMER_ID_DAT, 0, NULL);
 }
 
-void CExtractBrowserDlg::OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl)
+void CExtractBrowserDlg::OnDocumentComplete(const std::wstring& url)
 {
-	CCustomDHtmlDialog::OnDocumentComplete(pDisp, szUrl);
-
-	if (pDisp != m_pBrowserApp) { return; }
+	CCustomDHtmlDialog::OnDocumentComplete(url);
 
 	if (!this_.header)
-	{// リソースの読み込み終了後にヘッダーを読み込む
-	 // ブラウザウィンドウフック
+	{// load header after resource load
+		// browser window hook
 		utl::BrowserHook::Subclass(GetSafeBrowserHwnd(), GetSafeHwnd());
 
 		bbs::BBSSkin skin(gl_.value.detail.skin.thread);
@@ -303,7 +279,7 @@ void CExtractBrowserDlg::OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl)
 		this_.header = true;
 	}
 	else
-	{// 新規読み込みが終わってからDatを処理する
+	{// process Dat after new load
 		this_.complete = true;
 		if (this_.callback)
 		{
@@ -313,37 +289,33 @@ void CExtractBrowserDlg::OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl)
 	}
 }
 
-HRESULT CExtractBrowserDlg::TranslateAccelerator(LPMSG lpMsg, const GUID * pguidCmdGroup, DWORD nCmdID)
+HRESULT CExtractBrowserDlg::OnBrowserKey(MSG& msg)
 {
-	if (lpMsg && lpMsg->message == WM_KEYDOWN)
+	if (msg.message == WM_KEYDOWN)
 	{
-		if (lpMsg->wParam == VK_F5)
+		if (msg.wParam == VK_F5)
 		{
-			//gl_.bbs.refresh();
 			return S_OK;
 		}
 		else if (GetKeyState(VK_CONTROL) & 0x8000)
 		{
-			if (lpMsg->wParam != L'A' &&
-				lpMsg->wParam != L'Z' &&
-				lpMsg->wParam != L'X' &&
-				lpMsg->wParam != L'C' &&
-				lpMsg->wParam != L'V')
+			if (msg.wParam != L'A' &&
+				msg.wParam != L'Z' &&
+				msg.wParam != L'X' &&
+				msg.wParam != L'C' &&
+				msg.wParam != L'V')
 			{
 				return S_OK;
 			}
 		}
 	}
 	return S_FALSE;
-
-	//return CCustomDHtmlDialog::TranslateAccelerator(lpMsg, pguidCmdGroup, nCmdID);
 }
 
 
-HRESULT CExtractBrowserDlg::ShowContextMenu(DWORD dwID, POINT* ppt, IUnknown* pcmdtReserved, IDispatch* pdispReserved)
+HRESULT CExtractBrowserDlg::OnBrowserContext(DWORD menuID, POINT* ppt, const PcrElement& el)
 {
-	return utl::ContextMenu::show(this, dwID, ppt, pdispReserved, 1, checkURL(), this_.url);
-	//return CCustomDHtmlDialog::ShowContextMenu(dwID, ppt, pcmdtReserved, pdispReserved);
+	return utl::ContextMenu::show(this, menuID, ppt, el, 1, checkURL(), this_.url);
 }
 
 void CExtractBrowserDlg::OnMouseMove(UINT nFlags, CPoint point)
@@ -364,29 +336,24 @@ void CExtractBrowserDlg::OnMouseLeave()
 
 void CExtractBrowserDlg::OnDestroy()
 {
+	utl::BrowserHook::Unsubclass(GetSafeBrowserHwnd());
+
 	CCustomDHtmlDialog::OnDestroy();
 
 	if (::IsWindow(popup_))
 	{
 		popup_.DestroyWindow();
 	}
-
-	utl::BrowserHook::Unsubclass(GetSafeBrowserHwnd());
 }
 
-HRESULT CExtractBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
+HRESULT CExtractBrowserDlg::OnAnchorMouseClick(const PcrElement& el)
 {
-	if (!pElement) { return S_OK; }
+	if (!el.valid()) { return S_OK; }
 	if (!this_.dhtml) { return S_OK; }
-
-	CComBSTR name;
-	if (!SUCCEEDED(pElement->get_className(&name))) { return S_OK; }
-
-	//gl_.addLog(L"OnAnchorMouseUp:%s", CString(name).GetString());
 
 	bbs::URIConvert cnv;
 	bbs::URIConvert::Result res;
-	if (cnv((LPCWSTR)CString(name), res))
+	if (cnv(el.cls, res))
 	{
 		if (res.anchor.matched)
 		{
@@ -404,29 +371,6 @@ HRESULT CExtractBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
 			{
 				scrollIntoView(res.ref.value);
 			}
-			//CMenu menu;
-			//if (menu.LoadMenu(IDR_CLICKMENU))
-			//{
-			//	CMenu *sub = menu.GetSubMenu(1);
-			//	int idm = 0;
-			//	if (sub)
-			//	{
-			//		if (!checkURL())
-			//		{
-			//			sub->EnableMenuItem(IDM_CLICK_JUMP, MF_DISABLED|MF_BYCOMMAND);
-			//		}
-
-			//		CPoint pt;
-			//		GetCursorPos(&pt);
-			//		idm = sub->TrackPopupMenu(TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, this);
-			//	}
-			//	menu.DestroyMenu();
-
-			//	switch (idm)
-			//	{
-			//	case IDM_CLICK_JUMP: scrollIntoView(res.ref.value); break;
-			//	}
-			//}
 		}
 		else if (res.http.matched)
 		{
@@ -434,13 +378,9 @@ HRESULT CExtractBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
 	}
 	else
 	{
-		CComQIPtr<IHTMLAnchorElement> anchor(pElement);
-
-		CComBSTR href;
-		if (anchor && SUCCEEDED(anchor->get_href(&href)))
+		if (!el.href.empty())
 		{
-			std::wstring url = CString(href).GetString();
-			utl::selectExecute(gl_.value.detail.browser.def, gl_.value.detail.browser.web, url);
+			utl::selectExecute(gl_.value.detail.browser.def, gl_.value.detail.browser.web, el.href);
 		}
 	}
 
@@ -448,9 +388,9 @@ HRESULT CExtractBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
 }
 
 
-HRESULT CExtractBrowserDlg::OnAnchorMouseOver(IHTMLElement* pElement)
+HRESULT CExtractBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 {
-	if (!pElement) { return S_OK; }
+	if (!el.valid()) { return S_OK; }
 
 	if (GetKeyState(VK_LBUTTON) & 0x8000 || GetKeyState(VK_RBUTTON) & 0x8000)
 	{
@@ -459,7 +399,7 @@ HRESULT CExtractBrowserDlg::OnAnchorMouseOver(IHTMLElement* pElement)
 
 	if (checkURL())
 	{
-		popup_.popup(pElement, gl_.value.detail.popup);
+		popup_.popup(el, gl_.value.detail.popup);
 	}
 	else
 	{
@@ -470,9 +410,9 @@ HRESULT CExtractBrowserDlg::OnAnchorMouseOver(IHTMLElement* pElement)
 	return S_OK;
 }
 
-HRESULT CExtractBrowserDlg::OnAnchorMouseOut(IHTMLElement* pElement)
+HRESULT CExtractBrowserDlg::OnAnchorMouseOut(const PcrElement& el)
 {
-	if (!pElement) { return S_OK; }
+	if (!el.valid()) { return S_OK; }
 
 	if (this_.notify)
 	{
@@ -481,7 +421,6 @@ HRESULT CExtractBrowserDlg::OnAnchorMouseOut(IHTMLElement* pElement)
 	}
 	return S_OK;
 }
-
 
 
 void CExtractBrowserDlg::OnTimer(UINT_PTR nIDEvent)
@@ -493,8 +432,7 @@ void CExtractBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 			int partial = gl_.value.detail.board.partial;
 
 			setPaneText(true);
-			CComPtr<IHTMLDocument2> doc2;
-			if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { break; }
+			if (!IsWebReady()) { break; }
 
 			std::wstring noname;
 			gl_.bbs.getNoName(noname);
@@ -507,16 +445,15 @@ void CExtractBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 				++count;
 				if (partial > 0 && count >= partial) { break; }
 			}
-			doc2->write(utl::SafeArray(res));
+			AppendDocument(res);
 
 			if (this_.it == this_.dat.end())
 			{
 				KillTimer(TIMER_ID_DAT);
-				doc2->close();
-				utl::refreshColor(doc2, this_.dat, gl_.value.detail.skin.thread);
+				utl::refreshColor(this, this_.dat, gl_.value.detail.skin.thread);
 
-				//::RedrawWindow(GetSafeBrowserHwnd(), NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
-
+				this_.pos = 0;
+				this_.total = 0;
 				SetTimer(TIMER_ID_SEARCH_COLOR, 0, NULL);
 				setPaneText();
 				break;
@@ -528,15 +465,23 @@ void CExtractBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 	case TIMER_ID_SEARCH_COLOR:
 		{
 			setPaneText(false);
-			std::wstring color = L"color=#0000ff style=\"background-color:#ffff00\"";
-			int count = HighLight(gl_.value.detail.board.partial, this_.begin, this_.end, this_.search, true, color);
-			this_.pos += count;
+			std::wstring color = L"color:#0000ff;background-color:#ffff00";
+			//[pcr-web] incremental highlight (former IMarkupPointer based HighLight)
+			int marked = HighlightMatches(this_.search, color, this_.pos, gl_.value.detail.board.partial);
+			if (this_.total == 0)
+			{
+				double total = 0;
+				std::wstring r;
+				if (Eval(L"pcr.find(\"" + pcrweb::JsEscape(this_.search) + L"\")", &r)) {
+					total = _wtoi(r.c_str());
+				}
+				this_.total = (int)total;
+			}
+			this_.pos += marked;
 
-			if (count == 0)
+			if (marked == 0 || this_.pos >= this_.total)
 			{
 				KillTimer(TIMER_ID_SEARCH_COLOR);
-				this_.begin.Release();
-				this_.end.Release();
 				setPaneText();
 				break;
 			}
@@ -563,7 +508,10 @@ void CExtractBrowserDlg::OnSize(UINT nType, int cx, int cy)
 
 BOOL CExtractBrowserDlg::OnEraseBkgnd(CDC* pDC)
 {
-	::RedrawWindow(GetSafeBrowserHwnd(), NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
+	HWND hwnd = GetSafeBrowserHwnd();
+	if (hwnd && ::IsWindow(hwnd))
+	{
+		::RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
+	}
 	return TRUE;
-	//return CCustomDHtmlDialog::OnEraseBkgnd(pDC);
 }

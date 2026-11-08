@@ -41,7 +41,8 @@
 // C4996 Œx‚ğ–³Œø‚É‚·‚é
 #define _SCL_SECURE_NO_WARNINGS
 
-#include <afxdhtml.h>
+//[pcr-web] MSHTML hosting replaced by WebView2 (PcrWeb)
+#include "PcrWeb.h"
 
 #include "Debug.h"
 #include "Util.h"

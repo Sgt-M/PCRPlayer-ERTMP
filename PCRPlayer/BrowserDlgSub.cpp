@@ -21,8 +21,7 @@ bool CBrowserDlg::createRes(int size)
 
 	update_();
 
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return false; }
+	if (!IsWebReady()) { return false; }
 
 	std::wstring noname;
 	gl_.bbs.getNoName(noname);
@@ -65,13 +64,14 @@ bool CBrowserDlg::createRes(int size)
 
 	if (!html.empty())
 	{
-		doc2->write(utl::SafeArray(html));
+		//[pcr-web] former doc2->write
+		AppendDocument(html);
 	}
 
 
 	if (this_.dat.size() <= this_.pos)
 	{
-		utl::refreshColor(doc2, this_.dat, gl_.value.detail.skin.thread);
+		utl::refreshColor(this, this_.dat, gl_.value.detail.skin.thread);
 
 
 		if (this_.init)

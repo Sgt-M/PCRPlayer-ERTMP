@@ -1,3 +1,4 @@
+// DHtmlUtl.cpp : [pcr-web] WebView2 bridge based helpers.
 #include "stdafx.h"
 #include "DHtmlUtl.h"
 
@@ -26,160 +27,55 @@ bool loadHtml(const std::wstring& path, std::wstring& html)
 	return false;
 }
 
-
-
-
-// count‚©‚ç‹t‡‚ÉƒfƒNƒŠƒƒ“ƒg‚µ‚È‚ª‚ç”­Œ¾”‚ğ‘‚«Š·‚¦‚é
+// count from the end, decrementing and rewriting post counts
 // id L"id:" + ID
-// count ”­Œ¾”
-// total ”­Œ¾‘”
+// count post count
+// total total posts
 void refreshCounter(
-	const CComPtr<IHTMLDocument2>& doc2, const std::wstring& id, int count, int total)
+	CCustomDHtmlDialog* dlg, const std::wstring& id, int count, int total)
 {
-	if (!doc2) { return; }
-
-	CComQIPtr<IHTMLDocument3> doc3(doc2);
-	if (doc3)
-	{
-		CComPtr<IHTMLElementCollection> c;
-		if (SUCCEEDED(doc3->getElementsByTagName(CComBSTR(L"span"), &c)) && c)
-		{
-			long len = 0;
-			if (SUCCEEDED(c->get_length(&len)) && len > 0)
-			{
-				int countx = count;
-				for (int i = len - 1; i >= 0; --i)
-				{
-					CComVariant vidx(i, VT_I4);
-					CComVariant vid(0, VT_I4);
-					CComPtr<IDispatch> disp;
-					if (SUCCEEDED(c->item(vidx, vid, &disp)) && disp)
-					{
-						CComQIPtr<IHTMLElement> element(disp);
-						if (element)
-						{
-							CComBSTR name;
-							if (SUCCEEDED(element->get_className(&name)))
-							{
-								if (CString(name) == (L"id:" + id).c_str())
-								{
-									--countx;
-									CString str;
-									str.Format(
-										L"[%d/%d]",
-										countx,
-										total
-									);
-									element->put_innerHTML(CComBSTR(str));
-									if (countx <= 0) { break; }
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-//if (SUCCEEDED())
-void refreshColor(
-	const CComPtr<IHTMLDocument2>& doc2, const LinkMap& map, const bbs::SkinConfig& cfg)
-{
-	if (!doc2) { return; }
-
-	CComPtr<IHTMLElementCollection> c;
-	if (SUCCEEDED(doc2->get_links(&c)) && c)
-	{
-		long len = 0;
-		if (SUCCEEDED(c->get_length(&len)))
-		{
-			for (int i = 0; i < len; ++i)
-			{
-				CComVariant vidx(i, VT_I4);
-				CComVariant vid(0, VT_I4);
-				CComPtr<IDispatch> disp;
-				if (SUCCEEDED(c->item(vidx, vid, &disp)) && disp)
-				{
-					CComQIPtr<IHTMLElement> element(disp);
-					if (element)
-					{
-						CComBSTR name;
-						if (SUCCEEDED(element->get_className(&name)))
-						{
-							std::wstring id = CString(name).GetString();
-							auto it = map.find(id);
-							if (it != map.end())
-							{
-								if (it->second.id)
-								{
-									std::wstring color;
-
-									if (it->second.total >= cfg.id.threshold)
-									{
-										color = toStr(cfg.id.color.third);
-									}
-									else if (it->second.total >= 2)
-									{
-										color = toStr(cfg.id.color.second);
-									}
-									else
-									{
-										color = toStr(cfg.id.color.first);
-									}
-
-									CComPtr<IHTMLStyle> style;
-									if (SUCCEEDED(element->get_style(&style)) && style)
-									{
-										style->put_color(CComVariant(color.c_str()));
-									}
-								}
-								else
-								{
-									std::wstring color;
-
-									if (it->second.total >= cfg.number.threshold)
-									{
-										color = toStr(cfg.number.color.third);
-									}
-									else if (it->second.total >= 1)
-									{
-										color = toStr(cfg.number.color.second);
-									}
-									else
-									{
-										color = toStr(cfg.number.color.first);
-									}
-
-									CComPtr<IHTMLStyle> style;
-									if (SUCCEEDED(element->get_style(&style)) && style)
-									{
-										style->put_color(CComVariant(color.c_str()));
-									}
-								}
-							}
-							else
-							{
-								if (id.find(L"id:") == 0)
-								{
-									CComPtr<IHTMLStyle> style;
-									if (SUCCEEDED(element->get_style(&style)) && style)
-									{
-										std::wstring color = toStr(cfg.id.color.first);
-										style->put_color(CComVariant(color.c_str()));
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+	if (!dlg) { return; }
+	std::wstring js =
+		L"pcr.refreshCounter(\"" + pcrweb::JsEscape(id) + L"\","
+		+ std::to_wstring(count) + L"," + std::to_wstring(total) + L")";
+	dlg->Eval(js);
 }
 
 void refreshColor(
-	const CComPtr<IHTMLDocument2>& doc2, const std::vector<bbs::ResInfo>& dat, const bbs::SkinConfig& cfg)
+	CCustomDHtmlDialog* dlg, const LinkMap& map, const bbs::SkinConfig& cfg)
+{
+	if (!dlg) { return; }
+
+	std::wstring m = L"{";
+	bool first = true;
+	for (auto& kv : map)
+	{
+		if (!first) { m += L","; }
+		first = false;
+		m += L"\"" + pcrweb::JsEscape(kv.first) + L"\":{\"id\":"
+		   + std::wstring(kv.second.id ? L"true" : L"false")
+		   + L",\"total\":" + std::to_wstring(kv.second.total) + L"}";
+	}
+	m += L"}";
+
+	std::wstring c = std::wstring(L"{\"idT\":")
+		+ std::to_wstring(cfg.id.threshold)
+		+ L",\"idC1\":\"" + toStr(cfg.id.color.first)      + L"\""
+		+ L",\"idC2\":\"" + toStr(cfg.id.color.second)     + L"\""
+		+ L",\"idC3\":\"" + toStr(cfg.id.color.third)      + L"\""
+		+ L",\"numT\":"  + std::to_wstring(cfg.number.threshold)
+		+ L",\"numC1\":\"" + toStr(cfg.number.color.first)  + L"\""
+		+ L",\"numC2\":\"" + toStr(cfg.number.color.second) + L"\""
+		+ L",\"numC3\":\"" + toStr(cfg.number.color.third)  + L"\""
+		+ L"}";
+
+	std::wstring js =
+		L"pcr.refreshColor(\"" + pcrweb::JsEscape(m) + L"\",\"" + pcrweb::JsEscape(c) + L"\")";
+	dlg->Eval(js);
+}
+
+void refreshColor(
+	CCustomDHtmlDialog* dlg, const std::vector<bbs::ResInfo>& dat, const bbs::SkinConfig& cfg)
 {
 	utl::LinkMap map;
 	for (auto it = dat.begin(); it != dat.end(); ++it)
@@ -200,7 +96,7 @@ void refreshColor(
 
 	if (!map.empty())
 	{
-		utl::refreshColor(doc2, map, cfg);
+		utl::refreshColor(dlg, map, cfg);
 	}
 }
 

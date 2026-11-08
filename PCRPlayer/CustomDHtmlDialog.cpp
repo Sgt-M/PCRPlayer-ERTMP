@@ -1,156 +1,684 @@
-// CustomDHtmlDialog.cpp : 実装ファイル
-//
+// CustomDHtmlDialog.cpp : WebView2 host implementation. ASCII-only.
+//[pcr-web] replaces the MSHTML/CDHtmlDialog implementation.
 
 #include "stdafx.h"
 #include "PCRPlayer.h"
-#include "CustomDHTMLDialog.h"
+#include "CustomDHtmlDialog.h"
+#include "IMEEdit.h"
+#include "Util.h"
 
-BEGIN_INTERFACE_MAP(CCustomControlSite, CBrowserControlSite)  
-	INTERFACE_PART(CCustomControlSite,
-		IID_IServiceProvider,
-		ServiceProvider)  
-	INTERFACE_PART(CCustomControlSite,
-		IID_IProtectFocus,
-		ProtectFocus)  
-END_INTERFACE_MAP()  
+#include <wrl/client.h>
+#include <wrl/implements.h>
 
-CCustomControlSite::CCustomControlSite(COleControlContainer* pCtrlCont, CDHtmlDialog *pHandler) :
-	CBrowserControlSite(pCtrlCont, pHandler)
+using Microsoft::WRL::Callback;
+using Microsoft::WRL::ComPtr;
+
+IMPLEMENT_DYNCREATE(CCustomDHtmlDialog, CDialog)
+
+#define PCR_TIMER_ENV (0x50c1)
+#define PCR_TIMER_KICK 0xA7C3
+
+static double ElementScale(const PcrElement& el, double zoom)
 {
+	double dpr = el.dpr > 0 ? el.dpr : 1.0;
+	return dpr * zoom;
 }
-
-
-CCustomControlSite::~CCustomControlSite()
-{
-}
-
-ULONG FAR EXPORT CCustomControlSite::XServiceProvider::AddRef()
-{
-	METHOD_PROLOGUE(CCustomControlSite, ServiceProvider)
-		return pThis->ExternalAddRef();
-}
-
-ULONG FAR EXPORT CCustomControlSite::XServiceProvider::Release()
-{                            
-	METHOD_PROLOGUE(CCustomControlSite, ServiceProvider)
-		return pThis->ExternalRelease();
-}
-
-HRESULT FAR EXPORT CCustomControlSite::XServiceProvider::QueryInterface(REFIID riid,void** ppvObj)
-{
-	METHOD_PROLOGUE(CCustomControlSite, ServiceProvider)
-		HRESULT hr = (HRESULT)pThis->ExternalQueryInterface(&riid, ppvObj);
-	return hr;
-}
-
-STDMETHODIMP CCustomControlSite::XServiceProvider::QueryService(REFGUID guidService,REFIID riid,void** ppvObject)
-{
-	if (guidService == SID_SProtectFocus && 
-		riid == IID_IProtectFocus)
-	{
-		METHOD_PROLOGUE(CCustomControlSite, ServiceProvider)
-			HRESULT hr = (HRESULT)pThis->ExternalQueryInterface(&riid, ppvObject);
-		return hr;
-	} 
-	else 
-	{
-		*ppvObject = NULL;
-	}
-	return E_NOINTERFACE;
-}
-
-// ProtectFocus Methods
-ULONG FAR EXPORT CCustomControlSite::XProtectFocus::AddRef()
-{
-	METHOD_PROLOGUE(CCustomControlSite, ProtectFocus)
-		return pThis->ExternalAddRef();
-}
-
-ULONG FAR EXPORT CCustomControlSite::XProtectFocus::Release()
-{                            
-	METHOD_PROLOGUE(CCustomControlSite, ProtectFocus)
-		return pThis->ExternalRelease();
-}
-
-HRESULT FAR EXPORT CCustomControlSite::XProtectFocus::QueryInterface(REFIID riid,void** ppvObj)
-{
-	METHOD_PROLOGUE(CCustomControlSite, ProtectFocus)
-		HRESULT hr = (HRESULT)pThis->ExternalQueryInterface(&riid, ppvObj);
-	return hr;
-}
-
-STDMETHODIMP CCustomControlSite::XProtectFocus::AllowFocusChange(BOOL *pfAllow)
-{
-	METHOD_PROLOGUE(CCustomControlSite, ProtectFocus)
-		//pThis->m_pHandler->RedrawWindow();
-	*pfAllow = FALSE;
-	return S_OK;
-}
-
-
-
-// CCustomDHtmlDialog ダイアログ
-
-IMPLEMENT_DYNCREATE(CCustomDHtmlDialog, CDHtmlDialog)
 
 CCustomDHtmlDialog::CCustomDHtmlDialog()
-	: CDHtmlDialog()
+	: CDialog()
+	, controller_(NULL)   //[pcr-web] init COM pointers (see WM_SIZE note)
+	, webview_(NULL)
+	, webchild_(NULL)
+	, ready_(false)
+	, bridgeOk_(false)
+	, creating_(false)
+	, navAllow_(0)
+	, scale_(1.0)
 {
-
+	::memset(&tokNavStart_, 0, sizeof(tokNavStart_));
+	::memset(&tokNavDone_, 0, sizeof(tokNavDone_));
+	::memset(&tokMsg_, 0, sizeof(tokMsg_));
+	::memset(&tokCtx_, 0, sizeof(tokCtx_));
+	::memset(&tokNewWin_, 0, sizeof(tokNewWin_));
+	::memset(&tokFail_, 0, sizeof(tokFail_));
 }
 
 CCustomDHtmlDialog::CCustomDHtmlDialog(UINT nIDTemplate, CWnd* pParent /*=NULL*/)
-	: CDHtmlDialog(nIDTemplate, /*IDR_HTML_CUSTOMDHTML*/0, pParent)
+	: CDialog(nIDTemplate, pParent)
+	, controller_(NULL)   //[pcr-web] must init: WM_SIZE can fire before OnInitDialog
+	, webview_(NULL)
+	, webchild_(NULL)
+	, ready_(false)
+	, bridgeOk_(false)
+	, creating_(false)
+	, navAllow_(0)
+	, scale_(1.0)
 {
-	
+	::memset(&tokNavStart_, 0, sizeof(tokNavStart_));
+	::memset(&tokNavDone_, 0, sizeof(tokNavDone_));
+	::memset(&tokMsg_, 0, sizeof(tokMsg_));
+	::memset(&tokCtx_, 0, sizeof(tokCtx_));
+	::memset(&tokNewWin_, 0, sizeof(tokNewWin_));
+	::memset(&tokFail_, 0, sizeof(tokFail_));
 }
 
 CCustomDHtmlDialog::~CCustomDHtmlDialog()
 {
 }
 
-BOOL CCustomDHtmlDialog::CreateControlSite(COleControlContainer* pContainer, 
-	COleControlSite** ppSite, UINT /* nID */, REFCLSID /* clsid */)
+// ---------------------------------------------------------------- create
+
+//[pcr-marsh] WebView2 objects belong to the web thread apartment. UI-thread
+//code must not call them directly (crash dump: OnSize->UpdateBounds jumped
+//into a freed vtable when called cross-apartment). CallWeb runs fn on the
+//owning thread, pumping UI messages while waiting; inline on that thread.
+static BOOL CallWeb(const std::function<void()>& fn, DWORD timeoutMs = 3000)
 {
-	if(ppSite == NULL)
+	if (pcrweb::IsWebThread()) { fn(); return TRUE; }
+	struct Ctx { HANDLE ev; volatile BOOL done; } ctx = { NULL, FALSE };
+	ctx.ev = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (!ctx.ev) { return FALSE; }
+	pcrweb::PostWebTask([&ctx, fn]() { fn(); ctx.done = TRUE; SetEvent(ctx.ev); });
+	DWORD t0 = GetTickCount();
+	BOOL ok = FALSE;
+	for (;;) {
+		MSG m;
+		while (PeekMessage(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessage(&m); }
+		if (WaitForSingleObject(ctx.ev, 10) == WAIT_OBJECT_0) { ok = TRUE; break; }
+		if (GetTickCount() - t0 > timeoutMs) { break; }
+	}
+	CloseHandle(ctx.ev);
+	return ok;
+}
+
+//container window used as the WebView2 parent
+static BOOL g_ctrRegistered = FALSE;
+static HWND MakeWebContainer(HWND dlg, RECT rc)
+{
+	if (!g_ctrRegistered) {
+		WNDCLASSEXW wc = { sizeof(wc) };
+		wc.lpfnWndProc = ::DefWindowProcW;
+		wc.hInstance = ::GetModuleHandleW(NULL);
+		wc.lpszClassName = L"PCRWEB_CTR";
+		g_ctrRegistered = ::RegisterClassExW(&wc) != 0;
+	}
+	if (!g_ctrRegistered) { return NULL; }
+	//plain child container inside the dialog (t53: the earlier 'invisible webview'
+	//was a missing controller AddRef, NOT the window shape; WS_CHILD verified ok)
+	HWND h = ::CreateWindowExW(0, L"PCRWEB_CTR", L"", WS_CHILD | WS_VISIBLE,
+		rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+		dlg, NULL, ::GetModuleHandleW(NULL), NULL);
+	return h;
+}
+
+void CCustomDHtmlDialog::StartCreate()
+{
+	pcrweb::Log(L"StartCreate tid=%u", ::GetCurrentThreadId());
+	if (controller_ || creating_) { return; }
+	creating_ = true;
+	//[pcr-web] controller creation MUST run inside the environment completion
+	//callback (PcrWeb.h note): register a ready-func and let the loader's
+	//callback fire CreateController for us.
+	HWND hwnd = GetSafeHwnd();
+	CCustomDHtmlDialog* self = this;
+	pcrweb::RequestEnvironment([hwnd, self](ICoreWebView2Environment* env) {
+		//[pcr-t3] MUST spawn the controller inside the env-completion call
+		//stack (t3 works / t13,t14,t16 later-context: S_OK but no document
+		//pipeline). Runs on the UI thread: env is UI-owned now.
+		if (!env) { pcrweb::Log(L"env ready: null"); return; }
+		if (!::IsWindow(hwnd)) { pcrweb::Log(L"env ready: hwnd gone"); return; }
+		if (self->controller_) { return; }
+		self->SpawnController(env);
+	});
+	// safety timer: clears creating_ on failure / never-arrived callback
+	::SetTimer(GetSafeHwnd(), PCR_TIMER_ENV, 500, NULL);
+}
+
+void CCustomDHtmlDialog::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == PCR_TIMER_KICK)
 	{
-		ASSERT(FALSE);
-		return FALSE;
+		if (!::IsWindow(GetSafeHwnd())) { return; }
+		::KillTimer(GetSafeHwnd(), PCR_TIMER_KICK);
+		StartCreate();
+		return;
 	}
 
-	CCustomControlSite *pBrowserSite = 
-		new CCustomControlSite(pContainer, this);
-	if (!pBrowserSite)
-		return FALSE;
+	if (nIDEvent == PCR_TIMER_ENV)
+	{
+		if (!::IsWindow(GetSafeHwnd())) { return; }
+		if (controller_) {
+			::KillTimer(GetSafeHwnd(), PCR_TIMER_ENV);
+			creating_ = false;
+		} else if (pcrweb::GetEnvFailed()) {
+			::KillTimer(GetSafeHwnd(), PCR_TIMER_ENV);
+			creating_ = false;
+			pcrweb::Log(L"env failed -> give up (runtime missing?)");
+		}
+		return;
+	}
+	CDialog::OnTimer(nIDEvent);
+}
 
-	*ppSite = pBrowserSite;
+void CCustomDHtmlDialog::CreateController()
+{
+	pcrweb::Log(L"CreateController enter");
+	ICoreWebView2Environment* env = pcrweb::GetEnvironment();
+	if (!env || controller_ || !::IsWindow(GetSafeHwnd())) { return; }
+
+	HWND hwnd = GetSafeHwnd();
+	HRESULT hr = env->CreateCoreWebView2Controller(hwnd,
+		Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+			[this, hwnd](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+				if (!::IsWindow(hwnd)) { return S_OK; }
+				return OnControllerCreated(result, controller);
+			}).Get());
+
+	pcrweb::Log(L"CreateController spawn hr=0x%08x", hr);
+	if (FAILED(hr)) {
+		pcrweb::Log(L"CreateCoreWebView2Controller failed hr=0x%08x", hr);
+	}
+}
+
+HRESULT CCustomDHtmlDialog::OnControllerCreated(HRESULT result, ICoreWebView2Controller* controller)
+{
+	pcrweb::Log(L"ctl created hr=0x%08x tid=%u", result, ::GetCurrentThreadId());
+	if (FAILED(result) || !controller) {
+		pcrweb::Log(L"controller completed hr=0x%08x", result);
+		return S_OK;
+	}
+	controller_ = controller;
+	controller_->AddRef();  //[pcr-fix] completion hands us an UNADDREFED pointer;
+	                          // without our own ref the glue releases the controller on
+	                          // return and the whole webview is torn down (no nav events).
+	HRESULT hrCore = controller_->get_CoreWebView2(&webview_);
+	pcrweb::Log(L"get_CoreWebView2 hr=0x%08x webview=%p", hrCore, (void*)webview_);
+	if (!webview_) { return S_OK; }
+
+	ComPtr<ICoreWebView2Settings> settings;
+	webview_->get_Settings(&settings);
+	if (settings) {
+		settings->put_AreDefaultContextMenusEnabled(FALSE);
+		settings->put_AreDevToolsEnabled(FALSE);
+		settings->put_IsStatusBarEnabled(FALSE);
+		settings->put_IsZoomControlEnabled(FALSE);
+	}
+	ComPtr<ICoreWebView2Controller4> controller4;
+	controller->QueryInterface(IID_PPV_ARGS(&controller4));
+	if (controller4) {
+		controller4->put_AllowExternalDrop(FALSE); // former put_RegisterAsDropTarget(FALSE)
+	}
+
+	UpdateBounds();
+	navAllow_ = 3;   //[pcr-web] debug: let initial navigations through
+	WireEvents();
+
+	// register bridge, then load a clean about:blank that has window.pcr
+	std::wstring bridge = pcrweb::BridgeScript();
+	HRESULT hr = webview_->AddScriptToExecuteOnDocumentCreated(bridge.c_str(),
+		Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+			[this](HRESULT error, LPCWSTR /*id*/) -> HRESULT {
+				if (!::IsWindow(GetSafeHwnd())) { return S_OK; }
+				if (FAILED(error)) {
+					pcrweb::Log(L"bridge register failed hr=0x%08x", error);
+					return S_OK;
+				}
+				bridgeOk_ = true;
+				pcrweb::Log(L"bridge registered");
+				navAllow_ = 1;   // the initial blank navigation
+				webview_->Navigate(L"about:blank");
+				return S_OK;
+			}).Get());
+	if (FAILED(hr)) { pcrweb::Log(L"AddScript spawn failed hr=0x%08x", hr); }
+	else { pcrweb::Log(L"AddScript spawned ok"); }
+	return S_OK;
+}
+
+void CCustomDHtmlDialog::WireEvents()
+{
+	pcrweb::Log(L"WireEvents enter");	// navigation: only the initial about:blank is allowed (former OnBeforeNavigate2)
+	HRESULT hrW_NavigationStarting = webview_->add_NavigationStarting(
+		Callback<ICoreWebView2NavigationStartingEventHandler>(
+			[this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+				BOOL cancel = TRUE;
+				if (navAllow_ > 0) { --navAllow_; cancel = FALSE; }
+				pcrweb::Log(L"navstart cancel=%d allow=%d", (int)cancel, navAllow_);
+				args->put_Cancel(cancel);
+				return S_OK;
+			}).Get(), &tokNavStart_);
+
+	HRESULT hrW_NavigationCompleted = webview_->add_NavigationCompleted(
+		Callback<ICoreWebView2NavigationCompletedEventHandler>(
+			[this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+				if (!::IsWindow(GetSafeHwnd())) { return S_OK; }
+				if (!ready_ && bridgeOk_) {
+					ready_ = true;
+					pcrweb::Log(L"navdone tid=%u", ::GetCurrentThreadId());
+					// locate child window (subclass target for utl::BrowserHook)
+					webchild_ = ::FindWindowEx(GetSafeHwnd(), NULL, L"Chrome_WidgetWin_0", NULL);
+					pcrweb::Log(L"webchild=%p", (void*)webchild_);
+					UpdateBounds();
+					OnWebReady();
+					// initial document complete (former about:blank eventsink)
+					pendingUrl_ = L"about:blank";
+					::PostMessageW(GetSafeHwnd(), WM_PCR_DOC, 0, 0);
+				}
+				return S_OK;
+			}).Get(), &tokNavDone_);
+
+	HRESULT hrW_WebMessageReceived = webview_->add_WebMessageReceived(
+		Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+			[this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+				if (!::IsWindow(GetSafeHwnd())) { return S_OK; }
+				LPWSTR json = NULL;
+				if (SUCCEEDED(args->get_WebMessageAsJson(&json)) && json) {
+					DispatchWebMessage(json);
+					CoTaskMemFree(json);
+				}
+				return S_OK;
+			}).Get(), &tokMsg_);
+
+	// context menu: prefer ICoreWebView2_11 event; JS 'context' message is the fallback
+	ComPtr<ICoreWebView2_11> webview11;
+	webview_->QueryInterface(IID_PPV_ARGS(&webview11));
+	if (webview11) {
+		webview11->add_ContextMenuRequested(
+			Callback<ICoreWebView2ContextMenuRequestedEventHandler>(
+				[this](ICoreWebView2*, ICoreWebView2ContextMenuRequestedEventArgs* args) -> HRESULT {
+					if (!::IsWindow(GetSafeHwnd())) { return S_OK; }
+					args->put_Handled(TRUE);
+
+					POINT pt = {};
+					if (FAILED(args->get_Location(&pt))) {
+						::GetCursorPos(&pt);
+					} else {
+						// get_Location is webview-client (device-independent px); to screen via child
+						HWND child = GetSafeBrowserHwnd();
+						if (child) { ::ClientToScreen(child, &pt); }
+						else { ::ClientToScreen(GetSafeHwnd(), &pt); }
+					}
+
+					DWORD menuID = PCRMENU_DEFAULT;
+					ComPtr<ICoreWebView2ContextMenuTarget> target;
+					if (SUCCEEDED(args->get_ContextMenuTarget(&target)) && target) {
+						COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND kind = COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_PAGE;
+						target->get_Kind(&kind);
+						switch (kind) {
+						case COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_IMAGE:
+							menuID = PCRMENU_IMAGE;
+							break;
+						case COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_SELECTED_TEXT:
+							menuID = PCRMENU_TEXTSELECT;
+							break;
+						case COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_AUDIO:
+						case COREWEBVIEW2_CONTEXT_MENU_TARGET_KIND_VIDEO:
+							menuID = PCRMENU_CONTROL;
+							break;
+						default:
+							break;
+						}
+					}
+
+					PcrElement el;
+					GetElementAt(CPoint(pt), el);
+					if (menuID == PCRMENU_DEFAULT || menuID == PCRMENU_TEXTSELECT) {
+						if (el.valid() && !el.href.empty()) {
+							menuID = PCRMENU_ANCHOR;
+						} else if (menuID == PCRMENU_DEFAULT) {
+							std::wstring sel;
+							if (GetSelectedText(sel) && !sel.empty()) { menuID = PCRMENU_TEXTSELECT; }
+						}
+					}
+
+					OnBrowserContext(menuID, &pt, el);
+					return S_OK;
+				}).Get(), &tokCtx_);
+	}
+
+	// target=_blank etc.: open with configured external browser
+	HRESULT hrW_NewWindowRequested = webview_->add_NewWindowRequested(
+		Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+			[this](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
+				LPWSTR uri = NULL;
+				if (SUCCEEDED(args->get_Uri(&uri)) && uri) {
+					utl::selectExecute(gl_.value.detail.browser.def, gl_.value.detail.browser.web, uri);
+					CoTaskMemFree(uri);
+				}
+				args->put_Handled(TRUE);
+				return S_OK;
+			}).Get(), &tokNewWin_);
+
+	HRESULT hrW_ProcessFailed = webview_->add_ProcessFailed(
+		Callback<ICoreWebView2ProcessFailedEventHandler>(
+			[this](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) -> HRESULT {
+				COREWEBVIEW2_PROCESS_FAILED_KIND kind = (COREWEBVIEW2_PROCESS_FAILED_KIND)0;
+				args->get_ProcessFailedKind(&kind);
+				pcrweb::Log(L"process failed kind=%d", (int)kind);
+				if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
+					ready_ = false;
+				}
+				return S_OK;
+			}).Get(), &tokFail_);
+	pcrweb::Log(L"WireEvents done");
+	pcrweb::Log(L"add_NavigationStarting hr=0x%08x", hrW_NavigationStarting);
+	pcrweb::Log(L"add_NavigationCompleted hr=0x%08x", hrW_NavigationCompleted);
+	pcrweb::Log(L"add_WebMessageReceived hr=0x%08x", hrW_WebMessageReceived);
+	pcrweb::Log(L"add_NewWindowRequested hr=0x%08x", hrW_NewWindowRequested);
+	pcrweb::Log(L"add_ProcessFailed hr=0x%08x", hrW_ProcessFailed);
+}
+
+// ---------------------------------------------------------------- messages
+
+BEGIN_MESSAGE_MAP(CCustomDHtmlDialog, CDialog)
+	ON_MESSAGE(WM_PCR_BROWSERKEY, &CCustomDHtmlDialog::OnBrowserKeyMsg)
+	ON_MESSAGE(WM_PCR_DOC, &CCustomDHtmlDialog::OnDocMsg)
+	//[pcr-t3] WM_PCR_ENVSTRM hop removed (controller now spawns inside env cb)
+END_MESSAGE_MAP()
+
+void CCustomDHtmlDialog::SpawnController(ICoreWebView2Environment* envRaw)
+{
+	ComPtr<ICoreWebView2Environment> env = envRaw;
+	pcrweb::Log(L"SpawnController tid=%u", ::GetCurrentThreadId());
+	if (env && !controller_ && ::IsWindow(GetSafeHwnd())) {
+		CRect r; GetClientRect(&r);
+		HWND container = MakeWebContainer(GetSafeHwnd(), r);
+		HWND hwnd = container ? container : GetSafeHwnd();
+		pcrweb::Log(L"parent hwnd=%p container=%p", (void*)hwnd, (void*)container);
+		HRESULT hrC = env->CreateCoreWebView2Controller(hwnd,
+			Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+				[this, hwnd](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+					if (!::IsWindow(hwnd)) { return S_OK; }
+					return OnControllerCreated(result, controller);
+				}).Get());
+		pcrweb::Log(L"CreateController(UI) spawn hr=0x%08x", hrC);
+	}
+}
+
+LRESULT CCustomDHtmlDialog::OnBrowserKeyMsg(WPARAM, LPARAM lParam)
+{
+	MSG msg = *(MSG*)lParam;
+	return OnBrowserKey(msg);
+}
+
+LRESULT CCustomDHtmlDialog::OnDocMsg(WPARAM, LPARAM)
+{
+	std::wstring url = pendingUrl_;
+	pcrweb::Log(L"docmsg");
+	OnDocumentComplete(url);
+	return 0;
+}
+
+void CCustomDHtmlDialog::DispatchWebMessage(const std::wstring& json)
+{
+	std::wstring body = json;
+	if (!body.empty() && body[0] == L'"') {
+		body = pcrweb::UnwrapJson(body); // older runtimes send the string itself
+	}
+
+	std::wstring e;
+	if (!pcrweb::JsonGetStr(body, L"e", e)) { return; }
+
+	if (e == L"scroll") {
+		double prog = 0;
+		pcrweb::JsonGetNum(body, L"prog", prog);
+		OnBrowserScroll(prog != 0);
+		return;
+	}
+
+	if (e == L"context") {
+		// fallback when ICoreWebView2_11 is unavailable (runtime too old)
+		if (tokCtx_.value != 0) { return; } // native handler already active
+		double x = 0, y = 0;
+		pcrweb::JsonGetNum(body, L"x", x);
+		pcrweb::JsonGetNum(body, L"y", y);
+		HWND child = GetSafeBrowserHwnd();
+		if (!child) { return; }
+		double zoom = 1.0;
+		if (controller_) {
+		ICoreWebView2Controller* zc = controller_;
+		CallWeb([zc, &zoom]() { if (zc) { zc->get_ZoomFactor(&zoom); } });
+	}
+		double dpr = custom_.dpr > 0 ? custom_.dpr : 1.0;
+		POINT pt = { (LONG)llround(x * dpr * zoom), (LONG)llround(y * dpr * zoom) };
+		::ClientToScreen(child, &pt);
+		CPoint sp(pt);
+		PcrElement el;
+		GetElementAt(sp, el);
+		DWORD menuID = PCRMENU_DEFAULT;
+		if (el.valid() && !el.href.empty()) { menuID = PCRMENU_ANCHOR; }
+		else {
+			std::wstring sel;
+			if (GetSelectedText(sel) && !sel.empty()) { menuID = PCRMENU_TEXTSELECT; }
+		}
+		OnBrowserContext(menuID, &sp, el);
+		return;
+	}
+
+	PcrElement el;
+	ParseElement(body, el);
+	if (!el.valid()) { return; }
+
+	if (e == L"click")       { OnAnchorMouseClick(el); }
+	else if (e == L"over")   { OnAnchorMouseOver(el); }
+	else if (e == L"out")    { OnAnchorMouseOut(el); }
+}
+
+void CCustomDHtmlDialog::ParseElement(const std::wstring& json, PcrElement& el)
+{
+	el = PcrElement();
+	pcrweb::JsonGetStr(json, L"tag", el.tag);
+	pcrweb::JsonGetStr(json, L"id", el.id);
+	pcrweb::JsonGetStr(json, L"cls", el.cls);
+	pcrweb::JsonGetStr(json, L"href", el.href);
+	pcrweb::JsonGetStr(json, L"text", el.text);
+	double v = 0;
+	if (pcrweb::JsonGetNum(json, L"x", v)) el.x = v;
+	if (pcrweb::JsonGetNum(json, L"y", v)) el.y = v;
+	if (pcrweb::JsonGetNum(json, L"w", v)) el.w = v;
+	if (pcrweb::JsonGetNum(json, L"h", v)) el.h = v;
+	if (pcrweb::JsonGetNum(json, L"dpr", v) && v > 0) el.dpr = v;
+}
+
+// ---------------------------------------------------------------- lifecycle
+
+//[pcr-web] deferred start (see PCR_TIMER_KICK): WM_INITDIALOG chain kills WebView2 callbacks
+BOOL CCustomDHtmlDialog::OnInitDialog()
+{
+	pcrweb::Log(L"CDHtml ctor-based OnInit enter");
+	CDialog::OnInitDialog();
+	pcrweb::Log(L"CDHtml base OnInit done -> deferred kick");
+	::SetTimer(GetSafeHwnd(), PCR_TIMER_KICK, 15, NULL);
 	return TRUE;
 }
 
+void CCustomDHtmlDialog::UpdateBounds()
+{
+	if (!controller_) { return; }
+	CRect rc;
+	GetClientRect(&rc);
+	ICoreWebView2Controller* ctl = controller_;
+	CallWeb([ctl, rc]() {
+		if (!ctl) { return; }
+		HRESULT hrB = ctl->put_Bounds(rc);
+		static int s_bt = 0;
+		if (s_bt < 6) { s_bt++; pcrweb::Log(L"bounds %ldx%ld hr=0x%08x", (long)rc.Width(), (long)rc.Height(), hrB); }
+	});
+}
 
+void CCustomDHtmlDialog::OnSize(UINT nType, int cx, int cy)
+{
+	CDialog::OnSize(nType, cx, cy);
+	UpdateBounds();
+}
 
+void CCustomDHtmlDialog::OnDestroy()
+{
+	::KillTimer(GetSafeHwnd(), PCR_TIMER_ENV);
+	//[pcr-marsh] teardown on the owning apartment; members cleared now so no
+	//UI path touches them again (the posted task keeps its own refs).
+	ICoreWebView2* wv = webview_;
+	ICoreWebView2Controller* ctl = controller_;
+	const EventRegistrationToken tNs = tokNavStart_, tNd = tokNavDone_, tMsg = tokMsg_,
+	                          tCtx = tokCtx_, tNw = tokNewWin_, tPf = tokFail_;
+	webview_ = NULL;
+	controller_ = NULL;
+	webchild_ = NULL;
+	ready_ = false;
+	if (wv || ctl) {
+		pcrweb::PostWebTask([wv, ctl, tNs, tNd, tMsg, tCtx, tNw, tPf]() {
+			if (wv) {
+				ComPtr<ICoreWebView2_11> w11;
+				if (SUCCEEDED(wv->QueryInterface(IID_PPV_ARGS(&w11))) && w11) {
+					w11->remove_ContextMenuRequested(tCtx);
+				}
+				wv->remove_NavigationStarting(tNs);
+				wv->remove_NavigationCompleted(tNd);
+				wv->remove_WebMessageReceived(tMsg);
+				wv->remove_NewWindowRequested(tNw);
+				wv->remove_ProcessFailed(tPf);
+			}
+			if (ctl) {
+				ctl->put_IsVisible(FALSE);
+				ctl->Close();
+			}
+			if (wv) { wv->Release(); }
+			if (ctl) { ctl->Release(); }
+		});
+	}
+	CDialog::OnDestroy();
+}
 
+BOOL CCustomDHtmlDialog::PreTranslateMessage(MSG* pMsg)
+{
+	if (pMsg->message == WM_KEYDOWN)
+	{
+		if (pMsg->wParam == VK_RETURN || pMsg->wParam == VK_ESCAPE)
+		{
+			return FALSE;
+		}
+	}
+	return CDialog::PreTranslateMessage(pMsg);
+}
+
+// ---------------------------------------------------------------- state / js
 
 HWND CCustomDHtmlDialog::GetSafeBrowserHwnd()
 {
-	HWND hwnd = GetSafeHwnd();
-	if (hwnd)
-	{
-		hwnd = ::FindWindowEx(hwnd, NULL, _T("Shell Embedding"), NULL);
-		if (hwnd)
-		{
-			hwnd = ::FindWindowEx(hwnd, NULL, _T("Shell DocObject View"), NULL); 
-			if (hwnd)
-			{
-				return ::FindWindowEx(hwnd, NULL, _T("Internet Explorer_Server"), NULL);
-			}
-		}
-	}
-	return hwnd;
+	return webchild_;
 }
 
+BOOL CCustomDHtmlDialog::GetBrowserSize(CSize& size)
+{
+	HWND hwnd = GetSafeBrowserHwnd();
+	if (!hwnd || !::IsWindow(hwnd)) { return FALSE; }
+	CRect rc;
+	::GetClientRect(hwnd, &rc);
+	size = rc.Size();
+	return TRUE;
+}
 
+BOOL CCustomDHtmlDialog::Eval(const std::wstring& js, std::wstring* result, DWORD timeoutMs)
+{
+	if (!webview_ || !ready_) { return FALSE; }
 
+	struct Ctx {
+		HANDLE ev;
+		HRESULT hr;
+		std::wstring val;
+		volatile bool done;
+	} ctx = { NULL, E_FAIL, std::wstring(), false };
+	ctx.ev = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (!ctx.ev) { return FALSE; }
+
+	ICoreWebView2* wvEval = webview_;
+	std::wstring jsCopy = js;
+	HRESULT hr = E_FAIL;
+	std::function<void()> spawn = [wvEval, jsCopy, &ctx, &hr]() {
+		if (!wvEval) { hr = E_POINTER; return; }
+		hr = wvEval->ExecuteScript(jsCopy.c_str(),
+			Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+				[&ctx](HRESULT error, LPCWSTR result) -> HRESULT {
+					ctx.hr = error;
+					if (result) { ctx.val = result; }
+					ctx.done = true;
+					SetEvent(ctx.ev);
+					return S_OK;
+				}).Get());
+	};
+	if (!CallWeb(spawn, timeoutMs)) { CloseHandle(ctx.ev); return FALSE; }
+	if (FAILED(hr)) { CloseHandle(ctx.ev); return FALSE; }
+
+	DWORD t0 = GetTickCount();
+	while (!ctx.done) {
+		MSG m;
+		while (PeekMessage(&m, NULL, 0, 0, PM_REMOVE)) {
+			TranslateMessage(&m);
+			DispatchMessage(&m);
+		}
+		if (WaitForSingleObject(ctx.ev, 10) == WAIT_OBJECT_0) { break; }
+		if (GetTickCount() - t0 > timeoutMs) { break; }
+	}
+	CloseHandle(ctx.ev);
+
+	if (!ctx.done || FAILED(ctx.hr)) { return FALSE; }
+	if (result) {
+		// ExecuteScript JSON-encodes the value; strip one string wrapper so
+		// bridge JSON objects ("{...}") parse directly.
+		*result = pcrweb::UnwrapJson(ctx.val);
+	}
+	return TRUE;
+}
+
+BOOL CCustomDHtmlDialog::EvalBoolOk(const std::wstring& js)
+{
+	pcrweb::Log(L"evalboolok: %.40s", js.c_str());
+	std::wstring r;
+	if (!Eval(js, &r)) { return FALSE; }
+	return r.find(L"ok") != std::wstring::npos;
+}
+
+std::wstring CCustomDHtmlDialog::EvalString(const std::wstring& js, DWORD timeoutMs)
+{
+	std::wstring r;
+	if (!Eval(js, &r, timeoutMs)) { return std::wstring(); }
+	return pcrweb::UnwrapJson(r);
+}
+
+// ---------------------------------------------------------------- content
+
+BOOL CCustomDHtmlDialog::LoadFromString(const std::wstring& html)
+{
+	std::wstring js = L"pcr.open(\"" + pcrweb::JsEscape(html) + L"\")";
+	pcrweb::Log(L"open eval %d chars", (int)html.size());
+	if (!EvalBoolOk(js)) { return FALSE; }
+	pcrweb::Log(L"open eval done");
+	pendingUrl_ = L"about:blank";
+	::PostMessageW(GetSafeHwnd(), WM_PCR_DOC, 0, 0);
+	return TRUE;
+}
+
+BOOL CCustomDHtmlDialog::AppendDocument(const std::wstring& html)
+{
+	std::wstring js = L"pcr.append(\"" + pcrweb::JsEscape(html) + L"\")";
+	return EvalBoolOk(js);
+}
+
+// ---------------------------------------------------------------- scroll
+
+BOOL CCustomDHtmlDialog::GetScrollParam(long& scrollTop, long& scrollHeight, long& clientHeight)
+{
+	std::wstring r;
+	if (!Eval(L"pcr.scroll()", &r)) { return FALSE; }
+	double top = 0, sh = 0, ch = 0, dpr = 0;
+	if (!pcrweb::JsonGetNum(r, L"top", top)) { return FALSE; }
+	if (!pcrweb::JsonGetNum(r, L"sh", sh)) { return FALSE; }
+	if (!pcrweb::JsonGetNum(r, L"ch", ch)) { return FALSE; }
+	if (pcrweb::JsonGetNum(r, L"dpr", dpr) && dpr > 0) { custom_.dpr = dpr; }
+	scrollTop = (long)top;
+	scrollHeight = (long)sh;
+	clientHeight = (long)ch;
+	return TRUE;
+}
 
 BOOL CCustomDHtmlDialog::StoreScroll()
 {
@@ -159,533 +687,175 @@ BOOL CCustomDHtmlDialog::StoreScroll()
 
 BOOL CCustomDHtmlDialog::RestoreScroll()
 {
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-	CComPtr<IDispatch> disp;
-	if (SUCCEEDED(doc2->get_Script(&disp)))
+	long top = 0, sh = 0, ch = 0;
+	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
+	custom_.scroll = true;
+	if (custom_.scrollHeight - custom_.clientHeight - custom_.scrollTop <= 0)
 	{
-		CComQIPtr<IHTMLWindow2> win2(disp);
-		if (win2)
-		{
-			if (custom_.scrollHeight - custom_.clientHeight - custom_.scrollTop <= 0)
-			{
-				long top = 0, scrollH = 0, clientH = 0;
-				if (!GetScrollParam(top, scrollH, clientH)) { return FALSE; }
-				custom_.scroll = true;
-				return SUCCEEDED(win2->scrollTo(0, scrollH));
-			}
-			custom_.scroll = true;
-			return SUCCEEDED(win2->scrollTo(0, custom_.scrollTop));
-		}
+		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L")");
 	}
-	return FALSE;
+	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)custom_.scrollTop) + L")");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToTop()
 {
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-
-	CComPtr<IDispatch> disp;
-	if (SUCCEEDED(doc2->get_Script(&disp)) && disp)
-	{
-		CComQIPtr<IHTMLWindow2> win2(disp);
-		if (win2)
-		{
-			custom_.scroll = true;
-			return SUCCEEDED(win2->scrollTo(0, 0));
-		}
-	}
-	return FALSE;
+	custom_.scroll = true;
+	return EvalBoolOk(L"pcr.scrollTo(0)");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToBottom()
 {
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-
-	CComPtr<IDispatch> disp;
-	if (SUCCEEDED(doc2->get_Script(&disp)) && disp)
-	{
-		CComQIPtr<IHTMLWindow2> win2(disp);
-		if (win2)
-		{
-			long top = 0, scrollH = 0, clientH = 0;
-			if (GetScrollParam(top, scrollH, clientH))
-			{
-				custom_.scroll = true;
-				return SUCCEEDED(win2->scrollTo(0, scrollH));
-			}
-		}
-	}
-	return FALSE;
+	long top = 0, sh = 0, ch = 0;
+	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
+	custom_.scroll = true;
+	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L")");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToBottomBy(long y)
 {
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-
-	CComPtr<IDispatch> disp;
-	if (SUCCEEDED(doc2->get_Script(&disp)) && disp)
+	long top = 0, sh = 0, ch = 0;
+	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
+	if (sh - ch - top > 0)
 	{
-		CComQIPtr<IHTMLWindow2> win2(disp);
-		if (win2)
-		{
-			long top = 0, scrollH = 0, clientH = 0;
-			if (GetScrollParam(top, scrollH, clientH))
-			{
-				if (scrollH - clientH - top > 0)
-				{
-					custom_.scroll = true;
-					return SUCCEEDED(win2->scrollBy(0, y));
-				}
-			}
-		}
+		custom_.scroll = true;
+		return EvalBoolOk(L"pcr.scrollBy(" + std::to_wstring((long long)y) + L")");
 	}
 	return FALSE;
 }
 
-
-
-BOOL CCustomDHtmlDialog::StringToIStream(const std::wstring& str, IStream** out)
-{	
-	if (!out) { return FALSE; }
-	HGLOBAL	global = ::GlobalAlloc(GMEM_MOVEABLE, str.size() * sizeof(wchar_t));
-	LPVOID data = ::GlobalLock(global);
-	memcpy(data, str.data(), str.size() * sizeof(wchar_t));
-	::GlobalUnlock(global);
-
-	CComPtr<IStream> stream;
-	if (S_OK == ::CreateStreamOnHGlobal(global, TRUE, &stream))
-	{	
-		*out = stream;
-		(*out)->AddRef();
-		return TRUE;
-	}
-	return FALSE;
-}
-
-BOOL CCustomDHtmlDialog::LoadFromString(const std::wstring& html)
-{
-	CComPtr<IStream> stream;
-	if (StringToIStream(html, &stream))
-	{
-		CComPtr<IDispatch> disp;
-		if (SUCCEEDED(m_pBrowserApp->get_Document(&disp)))
-		{
-			if (disp)
-			{
-				CComQIPtr<IPersistStreamInit> init(disp);
-				if (init)
-				{
-					CDHtmlDialog::OnBeforeNavigate(m_pBrowserApp, NULL);
-					if (SUCCEEDED(init->InitNew()))
-					{
-						if (SUCCEEDED(init->Load(stream)))
-						{
-							return TRUE;
-						}
-					}
-				}
-			}
-		}
-	}
-	return FALSE;
-}
-
-BOOL CCustomDHtmlDialog::GetDocumentElement(CComPtr<IHTMLElement>& elem)
-{
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-
-	CComQIPtr<IHTMLDocument3> doc3(doc2);
-	if (!doc3) { return FALSE; }
-
-	return (SUCCEEDED(doc3->get_documentElement(&elem)) && elem) ? TRUE : FALSE;
-}
-
-BOOL CCustomDHtmlDialog::GetDocumentElement(CComPtr<IHTMLElement2>& elem2)
-{
-	CComPtr<IHTMLElement> elem;
-	if (!GetDocumentElement(elem)) { return FALSE; }
-	return (SUCCEEDED(elem->QueryInterface(&elem2)) && elem2) ? TRUE : FALSE;
-}
-
-BOOL CCustomDHtmlDialog::GetBodyElement(CComPtr<IHTMLElement>& elem)
-{
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-	return (SUCCEEDED(doc2->get_body(&elem)) && elem) ? TRUE : FALSE;
-}
-
-BOOL CCustomDHtmlDialog::GetBodyElement(CComPtr<IHTMLElement2>& elem2)
-{
-	CComPtr<IHTMLElement> elem;
-	if (!GetBodyElement(elem)) { return FALSE; }
-	return (SUCCEEDED(elem->QueryInterface(&elem2)) && elem2) ? TRUE : FALSE;
-}
+// ---------------------------------------------------------------- dom
 
 BOOL CCustomDHtmlDialog::RemoveClassName(const std::wstring& search)
 {
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-
-	CComPtr<IHTMLElementCollection> c;
-	if (!SUCCEEDED(doc2->get_all(&c)) || !c) { return FALSE; }
-
-	long len = 0;
-	if (!SUCCEEDED(c->get_length(&len))) { return FALSE; }
-
-	BOOL result = FALSE;
-	for (int i = 0; i < len; ++i)
-	{
-		CComVariant vidx(i, VT_I4);
-		CComVariant vid(0, VT_I4);
-		CComPtr<IDispatch> disp;
-
-		if (!SUCCEEDED(c->item(vidx, vid, &disp)) || !disp) { continue; }
-
-		CComQIPtr<IHTMLElement> element(disp);
-		if (!element) { continue; }
-
-		CComBSTR name;
-		if (!SUCCEEDED(element->get_className(&name))) { continue; }
-		std::wstring target = CString(name).GetString();
-
-		if (target == search)
-		{
-			if (!SUCCEEDED(element->put_className(CComBSTR(L"")))) { continue; }
-			result = TRUE;
-		}
-		else if (target.find(search + L"-") == 0)
-		{
-			std::wstring anew(target.begin() + (search + L"-").size(), target.end());
-			if (!SUCCEEDED(element->put_className(CComBSTR(anew.c_str())))) { continue; }
-			result = TRUE;
-		}
-	}
-	return result;
+	std::wstring r;
+	std::wstring js = L"pcr.removeClassName(\"" + pcrweb::JsEscape(search) + L"\")";
+	if (!Eval(js, &r)) { return FALSE; }
+	return r != L"0" && !r.empty();
 }
 
 double CCustomDHtmlDialog::GetZoomFactor()
 {
-	double factor = 1.0;
-	CComPtr<IHTMLDocument2> doc2;
-	if (SUCCEEDED(GetDHtmlDocument(&doc2)) && doc2)
-	{
-		CComPtr<IHTMLElement> body;
-		if (SUCCEEDED(doc2->get_body(&body)) && body)
-		{
-			CRect rect;
-			if (GetBoundingClientRect(body, rect))
-			{
-				long physical = rect.Width();
-				long logical = 0;
-				if (SUCCEEDED(body->get_offsetWidth(&logical)))
-				{
-					if (logical > 0)
-					{
-						factor = round((((double)physical * 100.0) / (double)logical) / 100.0);
-					}
-					//gl_.addLog(L"factor:%.2f physical:%d logical:%d", factor, physical, logical);
-				}
-			}
-		}
+	// former: body rect physical width / offsetWidth logical width (= dpr * zoom)
+	std::wstring r = EvalString(L"pcr.scale()");
+	if (!r.empty()) {
+		double v = wcstod(r.c_str(), NULL);
+		if (v > 0) { scale_ = v; }
 	}
-	return factor;
+	return scale_;
 }
 
-
-BOOL CCustomDHtmlDialog::GetBoundingClientRect(const CComPtr<IHTMLElement>& element, CRect& rc)
+BOOL CCustomDHtmlDialog::SetZoomFactor(double factor)
 {
-	CComQIPtr<IHTMLElement2> element2(element);
-	if (element2)
-	{
-		CComPtr<IHTMLRect> rect;
-		if (SUCCEEDED(element2->getBoundingClientRect(&rect)) && rect)
-		{
-			if (SUCCEEDED(rect->get_left(&rc.left)) &&
-				SUCCEEDED(rect->get_top(&rc.top)) &&
-				SUCCEEDED(rect->get_right(&rc.right)) &&
-				SUCCEEDED(rect->get_bottom(&rc.bottom)))
-			{
-				return TRUE;
-			}
-		}
-	}
-	return FALSE;
-}
-
-BOOL CCustomDHtmlDialog::GetBoundingClientZoomRect(const CComPtr<IHTMLElement>& element, CRect& rc)
-{
-	if (!element) { return FALSE; }
-	if (!m_pBrowserApp) { return FALSE; }
-
-	if (!GetBoundingClientRect(element, rc)) { return FALSE; }
-
-	CComVariant vZoom = 100;
-	m_pBrowserApp->ExecWB(OLECMDID_OPTICAL_ZOOM, OLECMDEXECOPT_DONTPROMPTUSER, NULL, &vZoom);
-
-	if (vZoom.lVal != 100)
-	{
-		double factor = GetZoomFactor();
-		if (factor == 1.0 && vZoom.lVal > 0)
-		{
-			factor = (double)vZoom.lVal / 100.0;
-			rc.left = (LONG)round(rc.left * factor);
-			rc.top = (LONG)round(rc.top * factor);
-			rc.right = (LONG)round(rc.right * factor);
-			rc.bottom = (LONG)round(rc.bottom * factor);
-		}
-	}
-	return TRUE;
-}
-
-BOOL CCustomDHtmlDialog::GetScrollParam(long& scrollTop, long& scrollHeight, long& clientHeight)
-{
-	CComQIPtr<IHTMLElement2> root;
-	if (GetDocumentElement(root))
-	{
-		long top = 0, scrollH = 0, clientH = 0;
-		if (SUCCEEDED(root->get_scrollTop(&top)) &&
-			SUCCEEDED(root->get_scrollHeight(&scrollH)) &&
-			SUCCEEDED(root->get_clientHeight(&clientH)))
-		{
-			//gl_.addLog(L"root top:%d sh:%d ch:%d", top, scrollH, clientH);
-		}
-
-		if (top == 0 && clientH == 0)
-		{
-			CComQIPtr<IHTMLElement2> body;
-			if (GetBodyElement(body))
-			{
-				if (SUCCEEDED(body->get_scrollTop(&top)) &&
-					SUCCEEDED(body->get_scrollHeight(&scrollH)) &&
-					SUCCEEDED(body->get_clientHeight(&clientH)))
-				{
-					//gl_.addLog(L"body top:%d sh:%d ch:%d", top, scrollH, clientH);
-				}
-			}
-		}
-		//gl_.addLog(L"top:%d sh:%d ch:%d", top, scrollH, clientH);
-
-		scrollTop = top;
-		scrollHeight = scrollH;
-		clientHeight = clientH;
+	if (!controller_) { return FALSE; }
+	HRESULT hrZ = E_FAIL;
+	ICoreWebView2Controller* zcS = controller_;
+	CallWeb([zcS, factor, &hrZ]() { if (zcS) { hrZ = zcS->put_ZoomFactor(factor); } });
+	if (SUCCEEDED(hrZ)) {
+		scale_ = 0; // refresh on next GetZoomFactor
 		return TRUE;
 	}
 	return FALSE;
 }
 
-BOOL CCustomDHtmlDialog::CreateTxtRange(CComPtr<IHTMLTxtRange>& range)
+BOOL CCustomDHtmlDialog::GetBoundingClientRect(const PcrElement& el, CRect& rc)
 {
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-
-	CComPtr<IHTMLElement> element;
-	if (!SUCCEEDED(doc2->get_body(&element)) || !element) { return FALSE; }
-
-	CComQIPtr<IHTMLBodyElement> body(element);
-	if (!body) { return FALSE; }
-
-	if (!SUCCEEDED(body->createTextRange(&range)) || !range) { return FALSE; }
-
+	if (!el.valid()) { return FALSE; }
+	// controller zoom is kept at 1.0; el rect is CSS px, multiply dpr for physical px
+	double scale = ElementScale(el, 1.0);
+	if (controller_) {
+		double z = 1.0;
+		HRESULT hrG = E_FAIL;
+		ICoreWebView2Controller* zcG = controller_;
+		CallWeb([zcG, &z, &hrG]() { if (zcG) { hrG = zcG->get_ZoomFactor(&z); } });
+		if (SUCCEEDED(hrG) && z > 0) { scale = el.dpr * z; }
+	}
+	rc.left   = (LONG)llround(el.x * scale);
+	rc.top    = (LONG)llround(el.y * scale);
+	rc.right  = (LONG)llround((el.x + el.w) * scale);
+	rc.bottom = (LONG)llround((el.y + el.h) * scale);
 	return TRUE;
 }
 
-BOOL CCustomDHtmlDialog::GetSelectedTxtRange(CComPtr<IHTMLTxtRange>& range)
+BOOL CCustomDHtmlDialog::GetBoundingClientZoomRect(const PcrElement& el, CRect& rc)
 {
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
+	return GetBoundingClientRect(el, rc);
+}
 
-	CComPtr<IHTMLSelectionObject> select;
-	if (!SUCCEEDED(doc2->get_selection(&select)) || !select) { return FALSE; }
+BOOL CCustomDHtmlDialog::GetElementAt(const CPoint& screen, PcrElement& el)
+{
+	HWND hwnd = GetSafeBrowserHwnd();
+	if (!hwnd || !::IsWindow(hwnd)) { return FALSE; }
+	CPoint pt(screen);
+	::ScreenToClient(hwnd, &pt);
+	double scale = custom_.dpr * GetZoomFactor();
+	if (scale <= 0) { scale = 1.0; }
+	// pt is physical px; CSS px = physical / (dpr*zoom)
+	double cssDpr = custom_.dpr > 0 ? custom_.dpr : 1.0;
+	double zoom = 1.0;
+	if (controller_) {
+		ICoreWebView2Controller* zc = controller_;
+		CallWeb([zc, &zoom]() { if (zc) { zc->get_ZoomFactor(&zoom); } });
+	}
+	double divisor = cssDpr * (zoom > 0 ? zoom : 1.0);
+	if (divisor <= 0) { divisor = 1.0; }
+	double x = pt.x / divisor, y = pt.y / divisor;
+	std::wstring r;
+	std::wstring js = L"pcr.hit(" + std::to_wstring((long long)llround(x)) + L"," + std::to_wstring((long long)llround(y)) + L")";
+	if (!Eval(js, &r)) { return FALSE; }
+	if (r == L"null" || r.empty()) { return FALSE; }
+	ParseElement(r, el);
+	return el.valid();
+}
 
-	CComPtr<IDispatch> disp;
-	if (!SUCCEEDED(select->createRange(&disp)) || !disp) { return FALSE; }
+BOOL CCustomDHtmlDialog::GetElementById(const std::wstring& id, PcrElement& el)
+{
+	std::wstring r;
+	std::wstring js = L"pcr.anchor(\"" + pcrweb::JsEscape(id) + L"\")";
+	if (!Eval(js, &r)) { return FALSE; }
+	if (r == L"null" || r.empty()) { return FALSE; }
+	ParseElement(r, el);
+	return el.valid();
+}
 
-	if (!SUCCEEDED(disp->QueryInterface(&range)) || !range) { return FALSE; }
+BOOL CCustomDHtmlDialog::ScrollIntoViewId(const std::wstring& id)
+{
+	return EvalBoolOk(L"pcr.scrollIntoView(\"" + pcrweb::JsEscape(id) + L"\")");
+}
 
+BOOL CCustomDHtmlDialog::IsTextArea(const CPoint& screen)
+{
+	// former behavior: any element hit inside the browser counts
+	HWND hwnd = GetSafeBrowserHwnd();
+	if (!hwnd || !::IsWindow(hwnd)) { return FALSE; }
+	CPoint pt(screen);
+	HWND hit = ::WindowFromPoint(pt);
+	if (hit != hwnd) {
+		// WebView2 child may be nested; accept any descendant of the dialog
+		HWND top = ::GetAncestor(hit, GA_ROOT);
+		if (top != GetSafeHwnd()) { return FALSE; }
+	}
+	PcrElement el;
+	return GetElementAt(pt, el) ? TRUE : FALSE;
+}
+
+// ---------------------------------------------------------------- selection
+
+BOOL CCustomDHtmlDialog::GetSelectedText(std::wstring& text)
+{
+	text = EvalString(L"pcr.selectText()");
 	return TRUE;
-}
-
-int CCustomDHtmlDialog::HighLight(int partial,
-	CComPtr<IMarkupPointer>& begin, CComPtr<IMarkupPointer>& end,
-	const std::wstring& search, bool enable, const std::wstring& attr)
-{
-	if (search.empty()) { return 0; }
-
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return 0; }
-
-	CComBSTR attrStr(attr.c_str());
-	CComBSTR searchStr(search.c_str());
-
-	CComQIPtr<IMarkupServices> ms(doc2);
-	CComQIPtr<IMarkupContainer> mc(doc2);
-	int count = 0;
-	if(ms && mc)
-	{
-		if (!begin && !end)
-		{
-			if (!SUCCEEDED(ms->CreateMarkupPointer(&begin)) || !begin) { return 0; }
-			if (!SUCCEEDED(ms->CreateMarkupPointer(&end)) || !end) { return 0; }
-
-			if (!SUCCEEDED(begin->SetGravity(POINTER_GRAVITY_Right))) { return 0; }
-			if (!SUCCEEDED(end->SetGravity(POINTER_GRAVITY_Left))) { return 0; }
-
-			if (!SUCCEEDED(begin->MoveToContainer(mc, TRUE))) { return 0; }
-			if (!SUCCEEDED(end->MoveToContainer(mc, FALSE))) { return 0; }
-		}
-
-		while(true)
-		{
-			HRESULT hr = begin->FindText(searchStr, 0, end, NULL);
-			if (!SUCCEEDED(hr) || hr == S_FALSE) { break; }
-
-			CComPtr<IHTMLElement> font;
-			if (enable)
-			{
-				if (!SUCCEEDED(ms->CreateElement(TAGID_FONT, attrStr, &font))) { break; }
-				if (!SUCCEEDED(ms->InsertElement(font, begin, end))) { break; }
-				if (!SUCCEEDED(begin->MoveToPointer(end))) { break; }
-			}
-			else
-			{      
-				if (!SUCCEEDED(begin->CurrentScope(&font))) { break; }
-				if (!SUCCEEDED(ms->RemoveElement(font))) { break; }
-				if (!SUCCEEDED(begin->MoveToPointer(end))) { break; }
-			}
-			++count;
-			if (partial > 0 && count >= partial) { break; }
-		}
-	}
-	return count;
-}
-
-BOOL CCustomDHtmlDialog::CreateBookmarks(const std::wstring& search, std::vector<std::wstring>& bookmarks)
-{
-	CComPtr<IHTMLTxtRange> range;
-	if (!CreateTxtRange(range)) { return FALSE; }
-
-	bookmarks.clear();
-
-	CComBSTR character(L"character");
-	CComBSTR textedit(L"textedit");
-	while (true)
-	{
-		VARIANT_BOOL success = VARIANT_FALSE;
-		if (!SUCCEEDED(range->findText(CComBSTR(search.c_str()), 0, 0, &success))) { break; }
-		if (success == VARIANT_FALSE) { break; }
-
-		CComBSTR bookmark;
-		if (!SUCCEEDED(range->getBookmark(&bookmark))) { break; }
-
-		bookmarks.push_back(CString(bookmark).GetString());
-
-		long actual;
-		if (!SUCCEEDED(range->moveStart(character, 1, &actual))) { break; }
-		if (!SUCCEEDED(range->moveEnd(textedit, 1, &actual))) { break; }
-	}
-	return !bookmarks.empty();
-}
-
-BOOL CCustomDHtmlDialog::CreateBookmarkMap(const std::wstring& search, BookmarkMap& map)
-{
-	CComPtr<IHTMLTxtRange> range;
-	if (!CreateTxtRange(range)) { return FALSE; }
-
-	map.clear();
-
-	CComBSTR character(L"character");
-	CComBSTR textedit(L"textedit");
-	CComBSTR StartToEnd(L"StartToEnd");
-	int pos = 0;
-	while (true)
-	{
-		VARIANT_BOOL success = VARIANT_FALSE;
-		if (!SUCCEEDED(range->findText(CComBSTR(search.c_str()), 0, 0, &success))) { break; }
-		if (success == VARIANT_FALSE) { break; }
-
-		CComBSTR bookmark;
-		if (!SUCCEEDED(range->getBookmark(&bookmark))) { break; }
-
-		++pos;
-		map.insert(std::make_pair(CString(bookmark).GetString(), pos));
-
-		long actual;
-		if (!SUCCEEDED(range->setEndPoint(StartToEnd, range)) ||
-			!SUCCEEDED(range->moveEnd(textedit, 1, &actual)))
-		{
-			break;
-		}
-
-		//if (!SUCCEEDED(range->moveStart(character, 1, &actual))) { break; }
-		//if (!SUCCEEDED(range->moveEnd(textedit, 1, &actual))) { break; }
-	}
-	return !map.empty();
-}
-
-
-BOOL CCustomDHtmlDialog::SearchParent(const std::wstring& search, const boost::function<void(const CComPtr<IHTMLElement>&)>& callback)
-{
-	CComPtr<IHTMLTxtRange> range;
-	if (!CreateTxtRange(range)) { return FALSE; }
-
-	BOOL result = FALSE;
-	CComBSTR character(L"character");
-	CComBSTR textedit(L"textedit");
-	while (true)
-	{
-		VARIANT_BOOL success = VARIANT_FALSE;
-		if (!SUCCEEDED(range->findText(CComBSTR(search.c_str()), 0, 0, &success))) { break; }
-		if (success == VARIANT_FALSE) { break; }
-
-		CComPtr<IHTMLElement> parent;
-		if (SUCCEEDED(range->parentElement(&parent)) && parent)
-		{
-			callback(parent);
-			result = TRUE;
-		}
-
-		long actual;
-		if (!SUCCEEDED(range->moveStart(character, 1, &actual))) { break; }
-		if (!SUCCEEDED(range->moveEnd(textedit, 1, &actual))) { break; }
-	}
-	return result;
-}
-
-
-BOOL CCustomDHtmlDialog::GetParentID(const CComPtr<IHTMLElement>& element, const std::wstring& header, std::wstring& id)
-{
-	CComBSTR str;
-	if (SUCCEEDED(element->get_id(&str)))
-	{
-		std::wstring dst = CString(str).GetString();
-		if (dst.find(header) == 0)
-		{
-			id = dst;
-			return TRUE;
-		}
-	}
-
-	CComPtr<IHTMLElement> parent;
-	if (SUCCEEDED(element->get_parentElement(&parent)) && parent)
-	{
-		return GetParentID(parent, header, id);
-	}
-	return FALSE;
 }
 
 BOOL CCustomDHtmlDialog::SelectAll()
 {
-	if (m_pBrowserApp)
-	{
-		HRESULT hr = m_pBrowserApp->ExecWB(OLECMDID_SELECTALL, OLECMDEXECOPT_PROMPTUSER, NULL, NULL);
-		return SUCCEEDED(hr) ? TRUE : FALSE;
-	}
-	return TRUE;
+	return EvalBoolOk(L"pcr.selectAll()");
+}
+
+BOOL CCustomDHtmlDialog::CopySelectedText()
+{
+	std::wstring text;
+	if (!GetSelectedText(text) || text.empty()) { return FALSE; }
+	return CopyText(text);
 }
 
 BOOL CCustomDHtmlDialog::CopyText(const std::wstring& text)
@@ -708,222 +878,132 @@ BOOL CCustomDHtmlDialog::CopyText(const std::wstring& text)
 	return FALSE;
 }
 
-BOOL CCustomDHtmlDialog::CopySelectedText()
+BOOL CCustomDHtmlDialog::CopyAnchorHref(const PcrElement& el)
 {
-	if (m_pBrowserApp)
-	{
-		HRESULT hr = m_pBrowserApp->ExecWB(OLECMDID_COPY, OLECMDEXECOPT_PROMPTUSER, NULL, NULL);
-		return SUCCEEDED(hr) ? TRUE : FALSE;
-	}
-	return TRUE;
-	//CComPtr<IHTMLTxtRange> range;
-	//if (GetSelectedTxtRange(range)) { return FALSE; }
-	//if (!range) { return FALSE; }
-
-	//CComBSTR text;
-	//if (!SUCCEEDED(range->get_text(&text))) { return FALSE; }
-	//return CopyText(CString(text).GetString());
+	if (el.href.empty()) { return FALSE; }
+	return CopyText(el.href);
 }
 
-BOOL CCustomDHtmlDialog::CopyAnchorHref(const CComQIPtr<IHTMLAnchorElement>& anchor)
+BOOL CCustomDHtmlDialog::GetAnchorHref(const PcrElement& el, std::wstring& href)
 {
-	if (!anchor) { return FALSE;  }
-	CComBSTR str;
-	if (!SUCCEEDED(anchor->get_href(&str))) { return FALSE; }
-	return CopyText(CString(str).GetString());
-}
-
-BOOL CCustomDHtmlDialog::GetAnchorHref(const CComQIPtr<IHTMLAnchorElement>& anchor, std::wstring& href)
-{
-	if (!anchor) { return FALSE;  }
-	CComBSTR str;
-	if (!SUCCEEDED(anchor->get_href(&str))) { return FALSE; }
-	href = CString(str).GetString();
+	if (el.href.empty()) { return FALSE; }
+	href = el.href;
 	return TRUE;
 }
 
 BOOL CCustomDHtmlDialog::OpenWebSearch()
 {
-	CComQIPtr<IHTMLTxtRange> range;
-	if (!GetSelectedTxtRange(range)) { return FALSE; }
+	std::wstring str;
+	if (!GetSelectedText(str) || str.empty()) { return FALSE; }
 
-	CComBSTR str;
-	if (!SUCCEEDED(range->get_text(&str))) { return FALSE; }
-
-	std::wstring url = L"http://www.google.co.jp/search?q=" + utl::toUTF16(utl::urlencode(utl::toUTF8(CString(str).GetString())));
+	std::wstring url = L"http://www.google.co.jp/search?q=" + utl::toUTF16(utl::urlencode(utl::toUTF8(str)));
 	utl::selectExecute(gl_.value.detail.browser.def, gl_.value.detail.browser.web, url);
 	return TRUE;
 }
 
 BOOL CCustomDHtmlDialog::IsEnableCommand(ULONG id)
 {
-	if (!m_pBrowserApp) { return TRUE; }
-
-	CComQIPtr<IOleCommandTarget> target(m_pBrowserApp);
-	if (!target) { return TRUE; }
-
-	OLECMD cmd[] = { { id, 0 } };
-	if (!SUCCEEDED(target->QueryStatus(NULL, sizeof(cmd) / sizeof(OLECMD), cmd, NULL))) { return FALSE; }
-
-	return cmd[0].cmdf & OLECMDF_ENABLED ? TRUE : FALSE;
-}
-
-BOOL CCustomDHtmlDialog::IsTextArea(const CPoint& screen)
-{
-	CPoint pt(screen);
-	CWnd* wnd = WindowFromPoint(pt);
-	if (!wnd || wnd->GetSafeHwnd() != GetSafeBrowserHwnd()) { return FALSE; }
-
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return FALSE; }
-
-	wnd->ScreenToClient(&pt);
-	CComPtr<IHTMLElement> element;
-	if (!SUCCEEDED(doc2->elementFromPoint(pt.x, pt.y, &element)) || !element) { return FALSE; }
-
-	CComBSTR tag;
-	if (!SUCCEEDED(element->get_tagName(&tag))) { return FALSE; }
-
-	if (CString(tag).IsEmpty()) { return FALSE; }
-
-	return TRUE;
+	switch (id)
+	{
+	case OLECMDID_COPY:
+	{
+		std::wstring sel;
+		GetSelectedText(sel);
+		return sel.empty() ? FALSE : TRUE;
+	}
+	case OLECMDID_SELECTALL:
+		return ready_ ? TRUE : FALSE;
+	}
+	return FALSE;
 }
 
 BOOL CCustomDHtmlDialog::GetSource(std::wstring& source)
 {
-	if (!m_pBrowserApp) { return FALSE; }
-
-	CComPtr<IDispatch> disp; 
-	if (!SUCCEEDED(m_pBrowserApp->get_Document(&disp)) || !disp) { return FALSE; }
-
-	HGLOBAL global = NULL;
-	global = GlobalAlloc(GMEM_MOVEABLE, 0);
-	if (!global) { return FALSE; }
-
-	CComQIPtr<IPersistStreamInit> persist(disp);
-	if (persist)
-	{
-		CComPtr<IStream> stream;
-		if (SUCCEEDED(CreateStreamOnHGlobal(global, TRUE, &stream)) && stream)
-		{
-			if (SUCCEEDED(persist->Save(stream, FALSE)))
-			{
-				STATSTG stat = {0};
-				if (SUCCEEDED(stream->Stat(&stat, STATFLAG_NONAME)))
-				{
-					char* p = static_cast<char*>(GlobalLock(global));
-					if (p)
-					{
-						std::vector<char> vec(p, p + stat.cbSize.LowPart);
-						vec.push_back(L'\0');
-						vec.push_back(L'\0');
-						vec.push_back(L'\0');
-						vec.push_back(L'\0');
-						source = (LPCWSTR)vec.data();
-						GlobalUnlock(global);
-						return TRUE;
-					}
-				}
-			}
-		}
-	}
-	GlobalFree(global);
-	return FALSE;
+	source = EvalString(L"pcr.source()", 10000);
+	return !source.empty();
 }
 
 void CCustomDHtmlDialog::ChangeFocus()
 {
 	CWnd* wnd = GetFocus();
 	if (wnd)
-	{// エディットカーソル再描画
-		CIMEEdit::through() = true; // IME機能停止
+	{
+		CIMEEdit::through() = true;
 		wnd->SendMessage(WM_KILLFOCUS, NULL, 0);
 		wnd->SendMessage(WM_SETFOCUS, NULL, 0);
-		CIMEEdit::through() = false; // IME機能再開
+		CIMEEdit::through() = false;
 	}
 }
 
-void CCustomDHtmlDialog::DoDataExchange(CDataExchange* pDX)
+// ---------------------------------------------------------------- search
+
+BOOL CCustomDHtmlDialog::CreateBookmarks(const std::wstring& search, std::vector<std::wstring>& bookmarks)
 {
-	CDHtmlDialog::DoDataExchange(pDX);
+	bookmarks.clear();
+	std::wstring r = EvalString(L"pcr.find(\"" + pcrweb::JsEscape(search) + L"\")");
+	int n = _wtoi(r.c_str());
+	for (int i = 0; i < n; ++i) { bookmarks.push_back(std::to_wstring(i)); }
+	return !bookmarks.empty();
 }
 
-BOOL CCustomDHtmlDialog::OnInitDialog()
+BOOL CCustomDHtmlDialog::CreateBookmarkMap(const std::wstring& search, BookmarkMap& map)
 {
-	m_nHtmlResID = 0;
-	m_szHtmlResID = NULL;
-	m_strCurrentUrl = L"about:blank";
-	CDHtmlDialog::OnInitDialog();
-
-	if (m_pBrowserApp)
-	{
-		// ドラッグアンドドロップ抑止
-		m_pBrowserApp->put_RegisterAsBrowser(VARIANT_FALSE);
-		m_pBrowserApp->put_RegisterAsDropTarget(VARIANT_FALSE);
-		// エラーダイアログ抑止
-		m_pBrowserApp->put_Silent(VARIANT_TRUE);
-	}
-
-	// 元の設定
-	// SetHostFlags(DOCHOSTUIFLAG_NO3DBORDER | DOCHOSTUIFLAG_SCROLL_NO);
-	// 初期設定でスクロールバーが非表示になっているので表示するように設定する
-	// IE=7の時に3Dボーダーが表示されないようにする
-	SetHostFlags(DOCHOSTUIFLAG_NO3DBORDER | DOCHOSTUIFLAG_THEME);
-
-	return TRUE;  // フォーカスをコントロールに設定した場合を除き、TRUE を返します。
+	map.clear();
+	std::vector<std::wstring> v;
+	if (!CreateBookmarks(search, v)) { return FALSE; }
+	int pos = 0;
+	for (auto& k : v) { map.insert(std::make_pair(k, ++pos)); }
+	return !map.empty();
 }
 
-BOOL CCustomDHtmlDialog::PreTranslateMessage(MSG* pMsg)
+BOOL CCustomDHtmlDialog::SearchNext(const std::wstring& search, bool next, size_t& pos, size_t& total)
 {
-	if (pMsg->message == WM_KEYDOWN)
-	{
-		if (pMsg->wParam == VK_RETURN || pMsg->wParam == VK_ESCAPE)
-		{
-			return FALSE;
+	std::wstring r = EvalString(L"pcr.nav(\"" + pcrweb::JsEscape(search) + L"\"," + std::wstring(next ? L"1" : L"-1") + L")");
+	double idx = 0, tot = 0;
+	if (!pcrweb::JsonGetNum(r, L"idx", idx)) { return FALSE; }
+	if (!pcrweb::JsonGetNum(r, L"total", tot)) { return FALSE; }
+	if (idx <= 0 || tot <= 0) { return FALSE; }
+	pos = (size_t)idx;
+	total = (size_t)tot;
+	return TRUE;
+}
+
+// incremental highlight (former IMarkupPointer based HighLight).
+// count<0: all remaining from start. returns marked count.
+int CCustomDHtmlDialog::HighlightMatches(const std::wstring& search, const std::wstring& styleAttr, int start, int count)
+{
+	std::wstring r = EvalString(
+		L"pcr.mark(\"" + pcrweb::JsEscape(search) + L"\",\"" + pcrweb::JsEscape(styleAttr) +
+		L"\"," + std::to_wstring(start) + L"," + std::to_wstring(count) + L")");
+	double marked = 0;
+	if (!pcrweb::JsonGetNum(r, L"marked", marked)) { return 0; }
+	return (int)marked;
+}
+
+BOOL CCustomDHtmlDialog::UnhighlightMatches()
+{
+	return EvalBoolOk(L"pcr.unmark()");
+}
+
+BOOL CCustomDHtmlDialog::SearchParentIds(const std::wstring& search, const std::wstring& prefix, std::vector<std::wstring>& ids)
+{
+	ids.clear();
+	std::wstring arr = EvalString(L"pcr.parentIds(\"" + pcrweb::JsEscape(search) + L"\",\"" + pcrweb::JsEscape(prefix) + L"\")");
+	if (arr.empty()) { return FALSE; }
+	// parse flat ["a","b"]
+	size_t p = 0;
+	while ((p = arr.find(L'\"', p)) != std::wstring::npos) {
+		size_t q = arr.find(L'\"', p + 1);
+		if (q == std::wstring::npos) { break; }
+		std::wstring v = arr.substr(p + 1, q - p - 1);
+		// unescape minimal
+		std::wstring u;
+		for (size_t i = 0; i < v.size(); ++i) {
+			if (v[i] == L'\\' && i + 1 < v.size()) { ++i; u += v[i]; }
+			else { u += v[i]; }
 		}
+		ids.push_back(u);
+		p = q + 1;
 	}
-	return CDHtmlDialog::PreTranslateMessage(pMsg);
-}
-
-
-HRESULT CCustomDHtmlDialog::GetOptionKeyPath(LPOLESTR *pchKey, DWORD dw)
-{// http://msdn.microsoft.com/ja-jp/library/aa753258.aspx
-	HRESULT hr;
-	WCHAR* szKey = L"Software";
-
-	//  cbLength is the length of szKey in bytes.
-	size_t cbLength;
-	hr = StringCbLengthW(szKey, 1280, &cbLength);
-	//  TODO: Add error handling code here.
-
-	if (pchKey)
-	{
-		*pchKey = (LPOLESTR)CoTaskMemAlloc(cbLength + sizeof(WCHAR));
-		if (*pchKey)
-			hr = StringCbCopyW(*pchKey, cbLength + sizeof(WCHAR), szKey);
-	}
-	else
-		hr = E_INVALIDARG;
-
-	return hr;
-}
-
-
-BEGIN_MESSAGE_MAP(CCustomDHtmlDialog, CDHtmlDialog)
-END_MESSAGE_MAP()
-
-BEGIN_DHTML_EVENT_MAP(CCustomDHtmlDialog)
-END_DHTML_EVENT_MAP()
-
-BEGIN_EVENTSINK_MAP(CCustomDHtmlDialog, CDHtmlDialog)
-	ON_EVENT(CCustomDHtmlDialog, AFX_IDC_BROWSER, DISPID_BEFORENAVIGATE2, OnBeforeNavigate2, VTS_DISPATCH VTS_VARIANT VTS_VARIANT VTS_VARIANT VTS_VARIANT VTS_VARIANT VTS_PBOOL)
-END_EVENTSINK_MAP()
-
-
-// CCustomDHtmlDialog メッセージ ハンドラー
-void CCustomDHtmlDialog::OnBeforeNavigate2(LPDISPATCH pDisp, VARIANT* URL,VARIANT* Flags, VARIANT* TargetFrameName, VARIANT* PostData,VARIANT* Headers, BOOL* Cancel)
-{
-	if (custom_.navigate && Cancel) { *Cancel = VARIANT_TRUE; return; }
-	if (URL == NULL && Cancel) { *Cancel = VARIANT_TRUE; return; }
-	custom_.navigate = true;
+	return !ids.empty();
 }

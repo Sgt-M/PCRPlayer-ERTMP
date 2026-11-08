@@ -4,7 +4,13 @@
 
 #include "stdafx.h"
 #include "PCRPlayer.h"
+#include "PcrWeb.h"
+
+
+
+
 #include "MainDlg.h"
+
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -47,6 +53,16 @@ BOOL CMainApp::InitInstance()
 	InitCommonControlsEx(&InitCtrls);
 
 	CWinApp::InitInstance();
+
+	//[pcr-web] WebView2 loader requires OLE/COM on the UI thread
+	if (!AfxOleInit()) { return FALSE; }
+	//[pcr-probe] PCR_EARLY: pre-spawn environment on web thread at startup
+	if (::GetEnvironmentVariableW(L"PCR_EARLY", NULL, 0) > 0) {
+		pcrweb::RequestEnvironment([](ICoreWebView2Environment* e) {
+			pcrweb::Log(L"EARLY env=%p", (void*)e);
+		});
+	}
+
 
 	// ActiveX
 	AfxEnableControlContainer();

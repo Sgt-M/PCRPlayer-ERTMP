@@ -1718,14 +1718,11 @@ void CMainDlg::OnContextSearch()
 	else
 	{
 		CBrowserDlg* dlg = (CBrowserDlg*)layout_.GetSub();
-		CComPtr<IHTMLTxtRange> range;
-		if (dlg && dlg->GetSelectedTxtRange(range))
+		std::wstring str;
+		//[pcr-web] GetSelectedTxtRange replaced by GetSelectedText
+		if (dlg && dlg->GetSelectedText(str) && !str.empty())
 		{
-			CComBSTR str;
-			if (SUCCEEDED(range->get_text(&str)))
-			{
-				search_.setSearch(std::wstring(CString(str).GetString()));
-			}
+			search_.setSearch(str);
 		}
 	}
 

@@ -14,7 +14,8 @@ public:
 	static void clear();
 	static void put(const std::wstring& text);
 	static std::wstring pop();
-	static HRESULT show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, IDispatch* disp, int submenu, bool check, const std::wstring& url);
+	//[pcr-web] IDispatch (IHTMLElement) replaced by PcrElement snapshot
+	static HRESULT show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, const PcrElement& el, int submenu, bool check, const std::wstring& url);
 };
 
 }// namespace utl

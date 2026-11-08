@@ -319,6 +319,7 @@ void CMainDlg::ApplySubpane(bool bbs, bool seek, bool status)
 
 void CMainDlg::ShowBrowser(bool show)
 {
+	pcrweb::Log(L"ShowBrowser show=%d online=%d", (int)show, (int)gl_.player.online());
 	if (gl_.player.online())
 	{
 		if (show)

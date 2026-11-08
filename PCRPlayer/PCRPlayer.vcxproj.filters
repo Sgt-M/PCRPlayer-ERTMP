@@ -567,10 +567,10 @@
     <ClInclude Include="CustomDHtmlDialog.h">
       <Filter>Dialog\Browser</Filter>
     </ClInclude>
-    <ClInclude Include="CustomEventHandler.h">
+    <ClInclude Include="DHtmlUtl.h">
       <Filter>Dialog\Browser</Filter>
     </ClInclude>
-    <ClInclude Include="DHtmlUtl.h">
+    <ClInclude Include="PcrWeb.h">
       <Filter>Dialog\Browser</Filter>
     </ClInclude>
     <ClInclude Include="BrowserHook.h">
@@ -1082,10 +1082,10 @@
     <ClCompile Include="CustomDHtmlDialog.cpp">
       <Filter>Dialog\Browser</Filter>
     </ClCompile>
-    <ClCompile Include="CustomEventHandler.cpp">
+    <ClCompile Include="DHtmlUtl.cpp">
       <Filter>Dialog\Browser</Filter>
     </ClCompile>
-    <ClCompile Include="DHtmlUtl.cpp">
+    <ClCompile Include="PcrWeb.cpp">
       <Filter>Dialog\Browser</Filter>
     </ClCompile>
     <ClCompile Include="BrowserHook.cpp">

@@ -1,6 +1,7 @@
 // SplitterWndCtrl.cpp : ŽÀ‘•ƒtƒ@ƒCƒ‹
 //
 
+#include "PcrWeb.h"
 #include "stdafx.h"
 #include "LayoutCtrl.h"
 
@@ -154,9 +155,12 @@ BOOL CLayoutCtrl::CreateMain(CLayoutCtrl* wnd)
 BOOL CLayoutCtrl::CreateSub(CDialog* wnd, UINT id)
 {
 	if (!wnd) { return FALSE; }
+	pcrweb::Log(L"CreateSub begin id=%u", id);
 	this_.sub.clear();
 	this_.sub.wnd = wnd;
+	pcrweb::Log(L"CreateSub pre-Create");
 	wnd->Create(id, this);
+	pcrweb::Log(L"CreateSub post-Create");
 	wnd->ShowWindow(SW_SHOWNA);
 	this_.sub.visible = TRUE;
 	this_.sub.layout = FALSE;

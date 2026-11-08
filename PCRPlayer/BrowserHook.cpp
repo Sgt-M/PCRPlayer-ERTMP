@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "BrowserHook.h"
+#include "CustomDHtmlDialog.h"   // WM_PCR_BROWSERKEY
 
 namespace utl {
 
@@ -27,7 +28,7 @@ bool BrowserHook::Unsubclass(HWND hwnd)
 	if (!it->second.wndproc) { return false; }
 
 	::SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)it->second.wndproc);
-	map_.erase(hwnd);
+	map_.erase(it);
 	return true;
 }
 
@@ -39,28 +40,44 @@ LRESULT CALLBACK BrowserHook::WindowProc(HWND hWnd, UINT uMsg, WPARAM wp, LPARAM
 		switch (uMsg)
 		{
 		case WM_MOUSEWHEEL:
-			// 通常の状態ではポップアップのホイールが効かないため
-			// 登録されていてマウス直下にあるブラウザにメッセージを渡す
-			HWND hwnd = WindowFromPoint(CPoint(GET_X_LPARAM(lp), GET_Y_LPARAM(lp)));
-			if (hwnd != hWnd)
+			// [pcr-web] WebView2 handles the wheel itself.
+			// keep the popup-wheel forwarding and Ctrl-zoom suppression only.
 			{
-				auto it = map_.find(hwnd);
-				if (it != map_.end())
+				HWND hwnd = WindowFromPoint(CPoint(GET_X_LPARAM(lp), GET_Y_LPARAM(lp)));
+				if (hwnd != hWnd)
 				{
-					return CallWindowProc(it->second.wndproc, hwnd, uMsg, wp, lp);
+					auto it2 = map_.find(hwnd);
+					if (it2 != map_.end())
+					{
+						return CallWindowProc(it2->second.wndproc, hwnd, uMsg, wp, lp);
+					}
 				}
-			}
-
-			if (GetKeyState(VK_CONTROL) & 0x8000)
-			{// ズーム抑止のためCtrl入力を除去
-				std::array<BYTE, 256> state;
-				if (GetKeyboardState(state.data()))
-				{
-					state[VK_CONTROL] = 0;
-					SetKeyboardState(state.data());
+				if (GetKeyState(VK_CONTROL) & 0x8000)
+				{// zoom suppression: strip Ctrl state
+					std::array<BYTE, 256> state;
+					if (GetKeyboardState(state.data()))
+					{
+						state[VK_CONTROL] = 0;
+						SetKeyboardState(state.data());
+					}
 				}
 			}
 			return CallWindowProc(it->second.wndproc, hWnd, uMsg, wp, lp);
+		}
+
+		//[pcr-web] former TranslateAccelerator path:
+		// give the dialog a chance to consume key messages synchronously.
+		switch (uMsg)
+		{
+		case WM_KEYDOWN:
+		case WM_SYSKEYDOWN:
+		{
+			MSG m = { hWnd, uMsg, wp, lp, GetTickCount() };
+			::GetCursorPos(&m.pt);
+			LRESULT handled = ::SendMessage(it->second.hwnd, WM_PCR_BROWSERKEY, 0, (LPARAM)&m);
+			if (handled == S_OK) { return 0; }
+			break;
+		}
 		}
 
 		switch (uMsg)
@@ -79,4 +96,3 @@ LRESULT CALLBACK BrowserHook::WindowProc(HWND hWnd, UINT uMsg, WPARAM wp, LPARAM
 
 
 } // namespace utl
-

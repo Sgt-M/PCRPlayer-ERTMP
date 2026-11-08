@@ -1,8 +1,7 @@
-// PopupBrowserDlg.cpp : 実装ファイル
-//
+// PopupBrowserDlg.cpp : implementation file
+//[pcr-web] WebView2 based implementation
 
 #include "stdafx.h"
-#include <exdispid.h> // DISPID_BEFORENAVIGATE2
 #include "PCRPlayer.h"
 #include "PopupBrowserDlg.h"
 #include "ExtractDlg.h"
@@ -16,7 +15,7 @@ enum TIMER_ID {
 #define TARGET_MARGIN 8
 
 
-// CPopupBrowserDlg ダイアログ
+// CPopupBrowserDlg dialog
 
 IMPLEMENT_DYNCREATE(CPopupBrowserDlg, CCustomDHtmlDialog)
 
@@ -32,19 +31,6 @@ CPopupBrowserDlg::CPopupBrowserDlg(CCustomDHtmlDialog* pParent /*=NULL*/, CCusto
 CPopupBrowserDlg::~CPopupBrowserDlg()
 {
 	gl_.callback.extract.pop(this);
-}
-
-
-
-void CPopupBrowserDlg::SizeHelper()
-{
-	if (::IsWindow(m_wndBrowser))
-	{
-		CRect rc;
-		GetClientRect(rc);
-		rc.DeflateRect(1, 1);
-		m_wndBrowser.MoveWindow(rc);
-	}
 }
 
 //=============================================================================
@@ -96,7 +82,7 @@ void CPopupBrowserDlg::onMouseMove()
 		}
 		if (rc.PtInRect(pt)) { return; }
 	}
-	
+
 	this_.target.SetRectEmpty();
 	showWindow(false);
 }
@@ -123,7 +109,7 @@ bool CPopupBrowserDlg::onMouseLeave()
 			}
 			else if (parent_ && wnd->GetSafeHwnd() == parent_->GetSafeBrowserHwnd())
 			{
-				// TrackMouseEventを設定するとスクロールが動かなくなる
+				// TrackMouseEvent breaks scrolling
 				return true;
 			}
 			else if (wnd->GetSafeHwnd() == GetSafeHwnd() ||
@@ -158,21 +144,18 @@ BOOL CPopupBrowserDlg::popup(const CRect& area, const PopupBrowserConfig& cfg, b
 	return preparePopup(area);
 }
 
-BOOL CPopupBrowserDlg::popup(IHTMLElement* pElement, const PopupBrowserConfig& cfg)
+BOOL CPopupBrowserDlg::popup(const PcrElement& el, const PopupBrowserConfig& cfg)
 {
-	return popup(NULL, pElement, cfg);
+	return popup(NULL, el, cfg);
 }
 
-BOOL CPopupBrowserDlg::popup(CPopupBrowserDlg* parent, IHTMLElement* pElement, const PopupBrowserConfig& cfg)
+BOOL CPopupBrowserDlg::popup(CPopupBrowserDlg* parent, const PcrElement& el, const PopupBrowserConfig& cfg)
 {
-	if (!parent_ || !pElement) { return FALSE; }
-
-	CComBSTR name;
-	if (!SUCCEEDED(pElement->get_className(&name))) { return FALSE; }
+	if (!parent_ || !el.valid()) { return FALSE; }
 
 	cfg_ = cfg;
 	this_.parent = parent;
-	this_.extract = (LPCWSTR)CString(name);
+	this_.extract = el.cls;
 	this_.margin = true;
 
 	if (this_.parent)
@@ -187,7 +170,7 @@ BOOL CPopupBrowserDlg::popup(CPopupBrowserDlg* parent, IHTMLElement* pElement, c
 	{
 		if (cfg_.anchor.enable && res.anchor.matched)
 		{
-			if (preparePopup(pElement))
+			if (preparePopup(parent_, el))
 			{
 				gl_.bbs.extract(res.anchor.value, cfg_.anchor.limit, cfg_.anchor.head);
 				return TRUE;
@@ -195,7 +178,7 @@ BOOL CPopupBrowserDlg::popup(CPopupBrowserDlg* parent, IHTMLElement* pElement, c
 		}
 		else if (cfg_.id.enable && res.id.matched)
 		{
-			if (preparePopup(pElement))
+			if (preparePopup(parent_, el))
 			{
 				gl_.bbs.extract(res.id.value, cfg_.id.limit, cfg_.id.head);
 				return TRUE;
@@ -203,7 +186,7 @@ BOOL CPopupBrowserDlg::popup(CPopupBrowserDlg* parent, IHTMLElement* pElement, c
 		}
 		else if (cfg_.ref.enable && res.ref.matched)
 		{
-			if (preparePopup(pElement))
+			if (preparePopup(parent_, el))
 			{
 				gl_.bbs.extract(res.ref.value, cfg_.ref.limit, cfg_.ref.head);
 				return TRUE;
@@ -257,12 +240,12 @@ BOOL CPopupBrowserDlg::preparePopup(const CRect& area)
 	return TRUE;
 }
 
-BOOL CPopupBrowserDlg::preparePopup(IHTMLElement* pElement)
+BOOL CPopupBrowserDlg::preparePopup(CCustomDHtmlDialog* src, const PcrElement& el)
 {
-	if (!parent_ || !pElement) { return FALSE; }
+	if (!parent_ || !el.valid()) { return FALSE; }
 
 	CRect area;
-	if (parent_->GetBoundingClientRect(pElement, area))
+	if (parent_->GetBoundingClientRect(el, area))
 	{
 		HWND hwnd = parent_->GetSafeBrowserHwnd();
 		::ClientToScreen(hwnd, &area.TopLeft());
@@ -274,56 +257,60 @@ BOOL CPopupBrowserDlg::preparePopup(IHTMLElement* pElement)
 
 //=============================================================================
 
+//[pcr-web] pump layout after resize so pcr.size() reflects new bounds
+static void RefreshLayout(CCustomDHtmlDialog* dlg)
+{
+	MSG m;
+	for (int i = 0; i < 3; ++i) {
+		while (PeekMessage(&m, NULL, 0, 0, PM_REMOVE)) {
+			TranslateMessage(&m);
+			DispatchMessage(&m);
+		}
+		Sleep(15);
+	}
+}
+
 bool CPopupBrowserDlg::calcScrollSize(CSize& size)
 {
-	CComQIPtr<IHTMLElement2> body;
-	if (GetBodyElement(body))
-	{
-		// 最低限1x1のウィンドウを作ってスクロールサイズを求める
-		// +2はボーダーライン
-		// OnSizeが呼ばれてブラウザコントロールがサイズ変更される
-		SetWindowPos(NULL, 0, 0, 1 + 2, 1 + 2, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-		body->get_scrollWidth(&size.cx);
-		body->get_scrollHeight(&size.cy);
-		return true;
-	}
-	return false;
+	// create a minimal 1x1 window to measure scroll size
+	// +2 is the border line
+	SetWindowPos(NULL, 0, 0, 1 + 2, 1 + 2, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+	RefreshLayout(this);
+
+	std::wstring r = EvalString(L"pcr.size()");
+	double sw = 0, sh = 0, dpr = 1.0, z = 1.0;
+	if (!pcrweb::JsonGetNum(r, L"sw", sw)) { return false; }
+	if (!pcrweb::JsonGetNum(r, L"sh", sh)) { return false; }
+	pcrweb::JsonGetNum(r, L"dpr", dpr);
+	pcrweb::JsonGetNum(r, L"z", z);
+	double f = (dpr > 0 ? dpr : 1.0) * (z > 0 ? z : 1.0);
+	size.cx = (int)(sw * f) + 2;
+	size.cy = (int)(sh * f) + 2;
+	return true;
 }
 
 bool CPopupBrowserDlg::calcWindowSize(const CSize& scroll, CSize& size)
 {
-	CComQIPtr<IHTMLElement2> body;
-	if (GetBodyElement(body))
+	// apply scroll size to compute scrollbar width
+	// +2 is the border line
+	SetWindowPos(NULL, 0, 0, scroll.cx + 2, scroll.cy + 2, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+	RefreshLayout(this);
+
+	std::wstring r = EvalString(L"pcr.size()");
+	double sw = 0, sh = 0, cw = 0, ch = 0, dpr = 1.0, z = 1.0;
+	if (!pcrweb::JsonGetNum(r, L"cw", cw)) { return false; }
+	if (!pcrweb::JsonGetNum(r, L"ch", ch)) { return false; }
+	pcrweb::JsonGetNum(r, L"dpr", dpr);
+	pcrweb::JsonGetNum(r, L"z", z);
+	double f = (dpr > 0 ? dpr : 1.0) * (z > 0 ? z : 1.0);
+
+	CSize browser;
+	if (GetBrowserSize(browser))
 	{
-		// スクロールサイズを適用してスクロールバーの幅を計算する
-		// +2はボーダーライン
-		SetWindowPos(NULL, 0, 0, scroll.cx + 2, scroll.cy + 2, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-
-		long clientW = 0, clientH = 0;
-		CComQIPtr<IHTMLElement2> root;
-		if (GetDocumentElement(root))
-		{
-			root->get_clientWidth(&clientW);
-			root->get_clientHeight(&clientH);
-
-			if (clientW == 0 || clientH == 0)
-			{
-				body->get_clientWidth(&clientW);
-				body->get_clientHeight(&clientH);
-			}
-
-			long width = 0, height = 0;
-			if (m_pBrowserApp)
-			{
-				m_pBrowserApp->get_Width(&width);
-				m_pBrowserApp->get_Height(&height);
-
-				// ブラウザサイズ(width) - 表示領域(clientW) = スクロールバーサイズ
-				size.cx = scroll.cx + max(width - clientW, 0) + 2;
-				size.cy = scroll.cy + max(height - clientH, 0) + 2;
-				return true;
-			}
-		}
+		// browser size(width) - visible area(clientW) = scrollbar size
+		size.cx = scroll.cx + (std::max)((LONG)(browser.cx - cw * f), (LONG)0) + 2;
+		size.cy = scroll.cy + (std::max)((LONG)(browser.cy - ch * f), (LONG)0) + 2;
+		return true;
 	}
 	return false;
 }
@@ -333,18 +320,17 @@ void CPopupBrowserDlg::setPosition()
 	if (this_.target.IsRectEmpty()) { return; }
 	CRect target(this_.target);
 
-
 	CSize scroll;
 	if (calcScrollSize(scroll))
 	{
-		// マウスカーソル位置のモニタ情報取得
+		// monitor info at cursor
 		MONITORINFO mi;
 		CPoint pt;
 		GetCursorPos(&pt);
 		utl::getDesktopRectFromPoint(pt, mi);
 		CRect rc(mi.rcWork);
 
-		// モニタの大きさに合わせる
+		// fit monitor size
 		if (rc.Width() - scroll.cx < 0)
 		{
 			scroll.cx = rc.Width() - 2;
@@ -359,7 +345,7 @@ void CPopupBrowserDlg::setPosition()
 		CSize size;
 		if (calcWindowSize(scroll, size))
 		{
-			// スクロールバーを付けたサイズをモニタの大きさに合わせる
+			// fit scrollbar-added size to monitor
 			if (rc.Width() - size.cx < 0)
 			{
 				size.cx = rc.Width();
@@ -383,9 +369,9 @@ void CPopupBrowserDlg::setPosition()
 			}
 
 			if (ay < rc.top)
-			{// 上にはみ出す
+			{// overflows top
 				if (((rc.bottom - target.bottom) - size.cy) > 0)
-				{// 下にはみ出さない
+				{// fits below
 					ay = target.bottom;
 				}
 				else
@@ -394,21 +380,15 @@ void CPopupBrowserDlg::setPosition()
 					CRect arc(ax, ay, ax + size.cx, ay + size.cy);
 					if (arc.PtInRect(target.TopLeft()) &&
 						arc.PtInRect(target.BottomRight()))
-					{// ポップアップ位置が隠れる
+					{// popup position hidden
 						this_.horizontal = false;
 						if (((rc.right - target.right) - size.cx) > 0)
-						{// 右にはみ出さない
+						{// fits right
 							ax = target.right;
 						}
 						else
 						{
 							ax = rc.right - size.cx;
-
-							//ax = target.left - size.cx;
-							//if (ax < 0)
-							//{// 左にはみ出す
-							//	ax = rc.left;
-							//}
 						}
 					}
 				}
@@ -449,7 +429,7 @@ void CPopupBrowserDlg::showWindow(bool show)
 	{
 		if (IsWindowVisible())
 		{
-			// wndBottomやwndTopだとちらつきが発生する
+			// wndBottom/wndTop cause flicker
 			SetWindowPos(&wndNoTopMost, 0, 0, 0, 0, SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_NOOWNERZORDER|SWP_NOSENDCHANGING);
 			ShowWindow(SW_HIDE);
 			ChangeFocus();
@@ -478,19 +458,7 @@ void CPopupBrowserDlg::scrollIntoView(int res)
 	{
 		CString anchor;
 		anchor.Format(L"res:%d", res);
-		CComPtr<IHTMLDocument2> doc2;
-		if (SUCCEEDED(target_->GetDHtmlDocument(&doc2)))
-		{
-			CComQIPtr<IHTMLDocument3> doc3(doc2);
-			if (doc3)
-			{
-				CComPtr<IHTMLElement> element;
-				if (SUCCEEDED(doc3->getElementById(CComBSTR(anchor), &element)) && element)
-				{
-					element->scrollIntoView(CComVariant(true));
-				}
-			}
-		}
+		target_->ScrollIntoViewId(anchor.GetString());
 	}
 }
 
@@ -557,15 +525,11 @@ void CPopupBrowserDlg::DoDataExchange(CDataExchange* pDX)
 	CCustomDHtmlDialog::DoDataExchange(pDX);
 }
 
-
-
-
 BOOL CPopupBrowserDlg::OnInitDialog()
 {
 	CCustomDHtmlDialog::OnInitDialog();
 
-	SizeHelper();
-	return FALSE;  // フォーカスをコントロールに設定した場合を除き、TRUE を返します。
+	return FALSE;
 }
 
 BEGIN_MESSAGE_MAP(CPopupBrowserDlg, CCustomDHtmlDialog)
@@ -584,13 +548,8 @@ BEGIN_MESSAGE_MAP(CPopupBrowserDlg, CCustomDHtmlDialog)
 	ON_COMMAND(IDM_CONTEXT_CLOSE, &CPopupBrowserDlg::OnContextClose)
 END_MESSAGE_MAP()
 
-BEGIN_DHTML_EVENT_MAP(CPopupBrowserDlg)
-	DHTML_EVENT_TAG((DISPID)DISPID_HTMLELEMENTEVENTS_ONCLICK, _T("a"), OnAnchorMouseClick)
-	DHTML_EVENT_TAG((DISPID)DISPID_HTMLELEMENTEVENTS_ONMOUSEOVER, _T("a"), OnAnchorMouseOver)
-END_DHTML_EVENT_MAP()
 
-
-// CPopupBrowserDlg メッセージ ハンドラー
+// CPopupBrowserDlg message handlers
 
 
 void CPopupBrowserDlg::OnCallbackExtract()
@@ -609,9 +568,6 @@ void CPopupBrowserDlg::OnCallbackExtract()
 	std::vector<bbs::ResInfo> dat;
 	if (!gl_.bbs.getExtract(dat)) { return; }
 
-	CComPtr<IHTMLDocument2> doc2;
-	if (!SUCCEEDED(GetDHtmlDocument(&doc2)) || !doc2) { return; }
-
 	std::wstring noname;
 	gl_.bbs.getNoName(noname);
 	bbs::BBSSkin skin(gl_.value.detail.skin.popup, noname);
@@ -624,11 +580,11 @@ void CPopupBrowserDlg::OnCallbackExtract()
 		res += skin.res(gl_.html.popupRes, *it) + L"\r\n";
 	}
 
-	doc2->writeln(utl::SafeArray(html + res));
-	doc2->close();
+	//[pcr-web] full document replace (former writeln + close)
+	LoadFromString(html + res);
 
-	// リンク色の更新
-	utl::refreshColor(doc2, dat, gl_.value.detail.skin.popup);
+	// link color update
+	utl::refreshColor(this, dat, gl_.value.detail.skin.popup);
 
 	setPosition();
 	ScrollToBottom();
@@ -636,16 +592,13 @@ void CPopupBrowserDlg::OnCallbackExtract()
 }
 
 
-
-void CPopupBrowserDlg::OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl)
+void CPopupBrowserDlg::OnDocumentComplete(const std::wstring& url)
 {
-	CCustomDHtmlDialog::OnDocumentComplete(pDisp, szUrl);
-
-	if (pDisp != m_pBrowserApp) { return; }
+	CCustomDHtmlDialog::OnDocumentComplete(url);
 
 	if (!this_.header)
-	{// リソースの読み込み終了後にヘッダーを読み込む
-		// ブラウザウィンドウフック
+	{// load header after resource load
+		// browser window hook
 		utl::BrowserHook::Subclass(GetSafeBrowserHwnd(), GetSafeHwnd());
 
 		bbs::BBSSkin skin(gl_.value.detail.skin.popup);
@@ -654,7 +607,7 @@ void CPopupBrowserDlg::OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl)
 		this_.header = true;
 	}
 	else
-	{// 新規読み込みが終わってからDatを処理する
+	{// process Dat after new load
 		this_.complete = true;
 		if (this_.callback)
 		{
@@ -662,43 +615,38 @@ void CPopupBrowserDlg::OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl)
 			OnCallbackExtract();
 		}
 	}
-
 }
 
-HRESULT CPopupBrowserDlg::TranslateAccelerator(LPMSG lpMsg, const GUID * pguidCmdGroup, DWORD nCmdID)
+HRESULT CPopupBrowserDlg::OnBrowserKey(MSG& msg)
 {
-	if (lpMsg && lpMsg->message == WM_KEYDOWN)
+	if (msg.message == WM_KEYDOWN)
 	{
-		if (lpMsg->wParam == VK_F5)
+		if (msg.wParam == VK_F5)
 		{
-			//gl_.bbs.refresh();
 			return S_OK;
 		}
 		else if (GetKeyState(VK_CONTROL) & 0x8000)
 		{
-			if (lpMsg->wParam != L'A' &&
-				lpMsg->wParam != L'Z' &&
-				lpMsg->wParam != L'X' &&
-				lpMsg->wParam != L'C' &&
-				lpMsg->wParam != L'V')
+			if (msg.wParam != L'A' &&
+				msg.wParam != L'Z' &&
+				msg.wParam != L'X' &&
+				msg.wParam != L'C' &&
+				msg.wParam != L'V')
 			{
 				return S_OK;
 			}
 		}
 	}
 	return S_FALSE;
-
-	//return CCustomDHtmlDialog::TranslateAccelerator(lpMsg, pguidCmdGroup, nCmdID);
 }
 
-HRESULT CPopupBrowserDlg::ShowContextMenu(DWORD dwID, POINT* ppt, IUnknown* pcmdtReserved, IDispatch* pdispReserved)
+HRESULT CPopupBrowserDlg::OnBrowserContext(DWORD menuID, POINT* ppt, const PcrElement& el)
 {
 	cancel(true);
-	HRESULT hr = utl::ContextMenu::show(this, dwID, ppt, pdispReserved, 2, checkURL(), this_.url);
+	HRESULT hr = utl::ContextMenu::show(this, menuID, ppt, el, 2, checkURL(), this_.url);
 	cancel(false);
 	PostMessage(WM_MOUSELEAVE);
 	return hr;
-	//return CCustomDHtmlDialog::ShowContextMenu(dwID, ppt, pcmdtReserved, pdispReserved);
 }
 
 
@@ -755,7 +703,7 @@ void CPopupBrowserDlg::OnMouseLeave()
 
 	if (parent_)
 	{
-		// 呼び出し先で自分が削除されるのでSendMessageで渡さない
+		// we get deleted inside; use PostMessage not SendMessage
 		parent_->PostMessage(WM_MOUSELEAVE);
 	}
 
@@ -764,19 +712,15 @@ void CPopupBrowserDlg::OnMouseLeave()
 
 void CPopupBrowserDlg::OnSize(UINT nType, int cx, int cy)
 {
-	//CCustomDHtmlDialog::OnSize(nType, cx, cy);
-
-	SizeHelper();
+	CCustomDHtmlDialog::OnSize(nType, cx, cy);
 }
 
 
 void CPopupBrowserDlg::OnPaint()
 {
 	CPaintDC dc(this); // device context for painting
-					   // TODO: ここにメッセージ ハンドラー コードを追加します。
-					   // 描画メッセージで CCustomDHtmlDialog::OnPaint() を呼び出さないでください。
-	CRect rc;
-	GetClientRect(rc);
+CRect rc;
+GetClientRect(rc);
 
 	if (gl_.value.detail.popup.edge)
 	{
@@ -795,9 +739,10 @@ void CPopupBrowserDlg::OnPaint()
 
 void CPopupBrowserDlg::OnDestroy()
 {
+	utl::BrowserHook::Unsubclass(GetSafeBrowserHwnd());
+
 	CCustomDHtmlDialog::OnDestroy();
 
-	utl::BrowserHook::Unsubclass(GetSafeBrowserHwnd());
 	destroyPopup();
 }
 
@@ -807,16 +752,13 @@ BOOL CPopupBrowserDlg::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 	return CCustomDHtmlDialog::OnMouseWheel(nFlags, zDelta, pt);
 }
 
-HRESULT CPopupBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
+HRESULT CPopupBrowserDlg::OnAnchorMouseClick(const PcrElement& el)
 {
-	if (!pElement) { return S_OK; }
-
-	CComBSTR name;
-	if (!SUCCEEDED(pElement->get_className(&name))) { return S_OK; }
+	if (!el.valid()) { return S_OK; }
 
 	bbs::URIConvert cnv;
 	bbs::URIConvert::Result res;
-	if (cnv((LPCWSTR)CString(name), res))
+	if (cnv(el.cls, res))
 	{
 		if (res.anchor.matched)
 		{
@@ -834,32 +776,6 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
 			{
 				scrollIntoView(res.ref.value);
 			}
-			//CMenu menu;
-			//if (menu.LoadMenu(IDR_CLICKMENU))
-			//{
-			//	CMenu *sub = menu.GetSubMenu(1);
-			//	int idm = 0;
-			//	if (sub)
-			//	{
-			//		if (!checkURL())
-			//		{
-			//			sub->EnableMenuItem(IDM_CLICK_JUMP, MF_DISABLED|MF_BYCOMMAND);
-			//		}
-
-			//		CPoint pt;
-			//		GetCursorPos(&pt);
-
-			//		beginCapture();
-			//		idm = sub->TrackPopupMenu(TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, this);
-			//		endCapture();
-			//	}
-			//	menu.DestroyMenu();
-
-			//	switch (idm)
-			//	{
-			//	case IDM_CLICK_JUMP: scrollIntoView(res.ref.value); break;
-			//	}
-			//}
 		}
 		else if (res.http.matched)
 		{
@@ -867,13 +783,9 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
 	}
 	else
 	{
-		CComQIPtr<IHTMLAnchorElement> anchor(pElement);
-
-		CComBSTR href;
-		if (anchor && SUCCEEDED(anchor->get_href(&href)))
+		if (!el.href.empty())
 		{
-			std::wstring url = CString(href).GetString();
-			utl::selectExecute(gl_.value.detail.browser.def, gl_.value.detail.browser.web, url);
+			utl::selectExecute(gl_.value.detail.browser.def, gl_.value.detail.browser.web, el.href);
 		}
 	}
 
@@ -881,14 +793,14 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseClick(IHTMLElement* pElement)
 }
 
 
-HRESULT CPopupBrowserDlg::OnAnchorMouseOver(IHTMLElement* pElement)
+HRESULT CPopupBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 {
 	if (this_.readOnly)
 	{
 		return S_OK;
 	}
 
-	if (!pElement) { return S_OK; }
+	if (!el.valid()) { return S_OK; }
 
 	if (GetKeyState(VK_LBUTTON) & 0x8000 || GetKeyState(VK_RBUTTON) & 0x8000)
 	{
@@ -899,7 +811,7 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseOver(IHTMLElement* pElement)
 	{
 		if (checkURL())
 		{
-			popup_->popup(this, pElement, cfg_);
+			popup_->popup(this, el, cfg_);
 		}
 	}
 	return S_OK;
@@ -920,37 +832,33 @@ void CPopupBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 }
 
 
-
 BOOL CPopupBrowserDlg::OnEraseBkgnd(CDC* pDC)
 {
-	//return TRUE;
-	return CCustomDHtmlDialog::OnEraseBkgnd(pDC);
+	HWND hwnd = GetSafeBrowserHwnd();
+	if (hwnd && ::IsWindow(hwnd))
+	{
+		::RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
+	}
+	return TRUE;
 }
 
 
 void CPopupBrowserDlg::OnLButtonDblClk(UINT nFlags, CPoint point)
 {
 	ChangeFocus();
-	//beginCapture();
-	//CCustomDHtmlDialog::OnLButtonDblClk(nFlags, point);
 }
 
 
 void CPopupBrowserDlg::OnLButtonDown(UINT nFlags, CPoint point)
 {
 	ChangeFocus();
-	//beginCapture();
-	//CCustomDHtmlDialog::OnLButtonDown(nFlags, point);
 }
 
 
 void CPopupBrowserDlg::OnLButtonUp(UINT nFlags, CPoint point)
 {
 	ChangeFocus();
-	//endCapture();
-	//CCustomDHtmlDialog::OnLButtonUp(nFlags, point);
 }
-
 
 void CPopupBrowserDlg::OnContextClose()
 {

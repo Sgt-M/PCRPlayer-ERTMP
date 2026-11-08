@@ -1,8 +1,6 @@
 #pragma once
 
-#ifdef _WIN32_WCE
-#error "CCustomDHtmlDialog は Windows CE ではサポートされていません。"
-#endif 
+//[pcr-web] WebView2 based popup browser dialog
 
 #include "CustomDHtmlDialog.h"
 #include "BrowserHook.h"
@@ -18,9 +16,9 @@ struct PopupBrowserConfig {
 			, limit(1000)
 			, head(true)
 		{}
-		bool enable; // ポップアップ表示
-		int limit; // 表示レス数
-		bool head; // 余りを先頭から削除して新しいレスを優先表示する
+		bool enable; // popup display
+		int limit; // displayed post count
+		bool head; // remove remainder from head, prefer newest posts
 	};
 
 	struct PopupAnchor : public Popup {
@@ -37,27 +35,25 @@ struct PopupBrowserConfig {
 		, border(RGB(0, 0, 0))
 	{}
 
-	int delay; // ポップアップするまでの時間
-	bool edge; // 3Dエッジ
-	COLORREF border; // ボーダーカラー
-	Popup ref; // レス番号ポップアップ
-	PopupAnchor anchor; // アンカーポップアップ
-	PopupID id; // IDポップアップ
+	int delay; // time before popup
+	bool edge; // 3D edge
+	COLORREF border; // border color
+	Popup ref; // post number popup
+	PopupAnchor anchor; // anchor popup
+	PopupID id; // ID popup
 };
 
-// CPopupBrowserDlg ダイアログ
+// CPopupBrowserDlg dialog
 
 class CPopupBrowserDlg : public CCustomDHtmlDialog
 {
 	DECLARE_DYNCREATE(CPopupBrowserDlg)
 
 public:
-	CPopupBrowserDlg(CCustomDHtmlDialog* pParent = NULL, CCustomDHtmlDialog* pTarget = NULL);   // 標準コンストラクター
+	CPopupBrowserDlg(CCustomDHtmlDialog* pParent = NULL, CCustomDHtmlDialog* pTarget = NULL);
 	virtual ~CPopupBrowserDlg();
 
-	void SizeHelper();
-
-// ダイアログ データ
+// dialog data
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_POPUP_BROWSER, IDH = IDR_HTML_POPUP_BROWSER };
 #endif
@@ -71,15 +67,15 @@ public:
 	void hide();
 
 	BOOL popup(const CRect& area, const PopupBrowserConfig& cfg, bool margin = false);
-	BOOL popup(IHTMLElement* pElement, const PopupBrowserConfig& cfg);
+	BOOL popup(const PcrElement& el, const PopupBrowserConfig& cfg);
 
 protected:
-	BOOL popup(CPopupBrowserDlg* parent, IHTMLElement* pElement, const PopupBrowserConfig& cfg);
+	BOOL popup(CPopupBrowserDlg* parent, const PcrElement& el, const PopupBrowserConfig& cfg);
 
 	void createPopup();
 	void destroyPopup();
 	BOOL preparePopup(const CRect& area);
-	BOOL preparePopup(IHTMLElement* pElement);
+	BOOL preparePopup(CCustomDHtmlDialog* src, const PcrElement& el);
 
 protected:
 	PopupBrowserConfig cfg_;
@@ -103,22 +99,22 @@ protected:
 			, cancel(false)
 		{}
 
-		bool header;//新規header読み込み
-		bool complete;//OnDocumentComplete完了
+		bool header;//load new header
+		bool complete;//OnDocumentComplete done
 		bool callback;//extractCallback
 
 		CPopupBrowserDlg* parent;
-		std::wstring url;//スレッドURL
-		std::wstring extract;//抽出対象
-		CRect target;//ポップアップ位置
-		bool margin;//ポップアップマージン
-		bool horizontal;//ポップアップ位置水平伸長
-		bool show;//ポップアップ表示
-		DWORD time;//ポップアップ時間
-		bool readOnly;//表示のみ
+		std::wstring url;//thread URL
+		std::wstring extract;//extract target
+		CRect target;//popup position
+		bool margin;//popup margin
+		bool horizontal;//popup horizontal expand
+		bool show;//popup show
+		DWORD time;//popup time
+		bool readOnly;//display only
 		bool hover;//TrackMouseEvent
-		bool capture;//マウスキャプチャ
-		bool cancel;//ポップアップ消去をキャンセル
+		bool capture;//mouse capture
+		bool cancel;//cancel popup erase
 	} this_;
 
 	bool calcScrollSize(CSize& size);
@@ -136,28 +132,29 @@ protected:
 	bool checkURL();
 
 protected:
-	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV サポート
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 	virtual BOOL OnInitDialog();
 
 	DECLARE_MESSAGE_MAP()
-	DECLARE_DHTML_EVENT_MAP()
 public:
 	afx_msg void OnCallbackExtract();
-	virtual void OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl);
-	virtual STDMETHODIMP TranslateAccelerator(LPMSG lpMsg, const GUID * pguidCmdGroup, DWORD nCmdID);
-	virtual STDMETHODIMP ShowContextMenu( DWORD dwID, POINT* ppt, IUnknown* pcmdtReserved, IDispatch* pdispReserved);
 	afx_msg void OnMouseMove(UINT nFlags, CPoint point);
 	afx_msg void OnMouseLeave();
 	afx_msg void OnSize(UINT nType, int cx, int cy);
 	afx_msg void OnPaint();
 	afx_msg void OnDestroy();
 	afx_msg BOOL OnMouseWheel(UINT nFlags, short zDelta, CPoint pt);
-	afx_msg HRESULT OnAnchorMouseClick(IHTMLElement *pElement);
-	afx_msg HRESULT OnAnchorMouseOver(IHTMLElement *pElement);
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg BOOL OnEraseBkgnd(CDC* pDC);
 	afx_msg void OnLButtonDblClk(UINT nFlags, CPoint point);
 	afx_msg void OnLButtonDown(UINT nFlags, CPoint point);
 	afx_msg void OnLButtonUp(UINT nFlags, CPoint point);
 	afx_msg void OnContextClose();
+
+	//[pcr-web] hooks
+	virtual void OnDocumentComplete(const std::wstring& url);
+	virtual HRESULT OnBrowserKey(MSG& msg);
+	virtual HRESULT OnBrowserContext(DWORD menuID, POINT* ppt, const PcrElement& el);
+	virtual HRESULT OnAnchorMouseClick(const PcrElement& el);
+	virtual HRESULT OnAnchorMouseOver(const PcrElement& el);
 };

@@ -1,10 +1,11 @@
 #pragma once
 
+//[pcr-web] WebView2 based BBS browser dialog
+
 #include "CustomDHtmlDialog.h"
 #include "PopupBrowserDlg.h"
 #include "ExtractDlg.h"
 #include "ThreadDlg.h"
-#include "CustomEventHandler.h"
 #include "BrowserMenu.h"
 
 #include "BBSSkin.h"
@@ -17,22 +18,17 @@
 
 #include <strsafe.h>
 
-#ifdef _WIN32_WCE
-#error "CDHtmlDialog は Windows CE ではサポートされていません。"
-#endif 
-
-// CBrowserDlg ダイアログ
+// CBrowserDlg dialog
 
 class CBrowserDlg : public CCustomDHtmlDialog
 {
 	DECLARE_DYNCREATE(CBrowserDlg)
 
 public:
-	CBrowserDlg(CWnd* pParent = NULL);   // 標準コンストラクター
+	CBrowserDlg(CWnd* pParent = NULL);   // standard constructor
 	virtual ~CBrowserDlg();
 
-
-// ダイアログ データ
+// dialog data
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_BROWSER, IDH = IDR_HTML_BROWSER };
 #endif
@@ -61,41 +57,42 @@ protected:
 			, time(0)
 		{}
 
-		bool header;//新規header読み込み
-		bool complete;//OnDocumentComplete完了
+		bool header;//load new header
+		bool complete;//OnDocumentComplete done
 		bool callback;//datCallback
 
-		bool init;//新規読み込み
-		std::wstring url;//スレッドURL
-		bool reset;//スレッドURLが同じ読み直し
-		bool scroll;//スクロール中
-		bool first;//>>1を追加読み込み
-		size_t pos;//読み込み位置
+		bool init;//new load
+		std::wstring url;//thread URL
+		bool reset;//reload same URL
+		bool scroll;//scrolling
+		bool first;//load >>1
+		size_t pos;//load position
 		DWORD time;
 		std::vector<bbs::ResInfo> dat;
 	} this_;
 
 	void autoScroll(bool latest = true);
 	bool createRes(int size = 0);
-	void setEventHandler();
 
 protected:
-	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV サポート
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 	virtual BOOL OnInitDialog();
-	virtual void OnDocumentComplete(LPDISPATCH pDisp, LPCTSTR szUrl);
-	virtual STDMETHODIMP TranslateAccelerator(LPMSG lpMsg, const GUID * pguidCmdGroup, DWORD nCmdID);
-	virtual STDMETHODIMP ShowContextMenu( DWORD dwID, POINT* ppt, IUnknown* pcmdtReserved, IDispatch* pdispReserved);
 
 	DECLARE_MESSAGE_MAP()
-	DECLARE_DHTML_EVENT_MAP()
 public:
 	afx_msg void OnSize(UINT nType, int cx, int cy);
 	afx_msg void OnCallbackDat();
-	afx_msg HRESULT OnAnchorMouseClick(IHTMLElement *pElement);
-	afx_msg HRESULT OnAnchorMouseOver(IHTMLElement *pElement);
 	afx_msg void OnMouseMove(UINT nFlags, CPoint point);
 	afx_msg void OnMouseLeave();
 	afx_msg void OnDestroy();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	afx_msg BOOL OnEraseBkgnd(CDC* pDC);
+
+	//[pcr-web] hooks
+	virtual void OnDocumentComplete(const std::wstring& url);
+	virtual HRESULT OnBrowserKey(MSG& msg);
+	virtual HRESULT OnBrowserContext(DWORD menuID, POINT* pt, const PcrElement& el);
+	virtual HRESULT OnAnchorMouseClick(const PcrElement& el);
+	virtual HRESULT OnAnchorMouseOver(const PcrElement& el);
+	virtual void OnBrowserScroll(bool programmatic);
 };

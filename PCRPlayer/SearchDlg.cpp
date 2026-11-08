@@ -159,10 +159,10 @@ bool CSearchDlg::Search(bool next)
 	size_t pos = this_.browser->getPos();
 
 	if (search != this_.search || url != this_.url || pos != this_.pos)
-	{// 検索環境が変わったらBookmarkMapを作り直す
-		this_.search = search;//検索文字列
-		this_.url = url;//スレッドURL
-		this_.pos = pos;//ブラウザレス数
+	{// rebuild bookmark state when search environment changed
+		this_.search = search;//search string
+		this_.url = url;//thread URL
+		this_.pos = pos;//browser post count
 		if (!this_.browser->CreateBookmarkMap(search, this_.bookmark))
 		{
 			status_.SetPaneText(0, L"0/0");
@@ -170,88 +170,16 @@ bool CSearchDlg::Search(bool next)
 		}
 	}
 
-	CComBSTR character(L"character");
-	CComBSTR textedit(L"textedit");
-
-	CComPtr<IHTMLTxtRange> sel;
-	if (!this_.browser->GetSelectedTxtRange(sel)) { return false; }
-
-	long actual;
-	if (next)
-	{// 選択範囲の終わりから最後までの範囲
-		if (!SUCCEEDED(sel->setEndPoint(CComBSTR(L"StartToEnd"), sel)) ||
-			!SUCCEEDED(sel->moveEnd(textedit, 1, &actual)))
-		{
-			return false;
-		}
-	}
-	else
-	{// 最初から選択範囲の直前までの範囲
-		if (!SUCCEEDED(sel->setEndPoint(CComBSTR(L"EndToStart"), sel)) ||
-			!SUCCEEDED(sel->moveStart(textedit, -1, &actual)))
-		{
-			return false;
-		}
-
-		long ret = 0;
-		if (SUCCEEDED(sel->compareEndPoints(CComBSTR(L"StartToEnd"), sel, &ret)) &&
-			ret == 0)
-		{// 始点と終点が同じ(空の範囲)なら全体の範囲に変更する
-			if (!SUCCEEDED(sel->moveStart(textedit, -1, &actual)) ||
-				!SUCCEEDED(sel->moveEnd(textedit, 1, &actual)))
-			{
-				return false;
-			}
-		}
+	//[pcr-web] IHTMLTxtRange findText replaced by bridge nav (wrap-around built in)
+	size_t idx = 0, total = 0;
+	if (!this_.browser->SearchNext(search, next, idx, total))
+	{
+		return false;
 	}
 
-	CComPtr<IHTMLTxtRange> range;
-	if (!this_.browser->CreateTxtRange(range)) { return false; }
-
-	long count = 0, flag = 0;
-	if (!next) { count = -1; flag = 0; }
-	VARIANT_BOOL success = VARIANT_FALSE;
-	if (!SUCCEEDED(sel->findText(CComBSTR(search.c_str()), count, flag, &success))) { return false; }
-	if (!success)
-	{// 見つからなかったらループのため全体の範囲で検索する
-		if (!SUCCEEDED(sel->moveStart(textedit, -1, &actual)) ||
-			!SUCCEEDED(sel->moveEnd(textedit, 1, &actual)))
-		{
-			return false;
-		}
-
-		if (!SUCCEEDED(sel->findText(CComBSTR(search.c_str()), count, flag, &success))) { return false; }
-		if (!success) { return false; }
-	}
-
-	sel->scrollIntoView();
-	sel->select();
-
-	CComBSTR bookmark;
-	if (SUCCEEDED(sel->getBookmark(&bookmark)))
-	{// BookmarkMapの中から検索位置を探して表示する
-		auto it = this_.bookmark.find(CString(bookmark).GetString());
-		if (it == this_.bookmark.end())
-		{
-			if (!this_.browser->CreateBookmarkMap(search, this_.bookmark))
-			{
-				status_.SetPaneText(0, L"0/0");
-				return false;
-			}
-			it = this_.bookmark.find(CString(bookmark).GetString());
-		}
-
-		if (it != this_.bookmark.end())
-		{
-			CString str;
-			str.Format(L"%d/%u", it->second, this_.bookmark.size());
-			status_.SetPaneText(0, str);
-		}
-		else
-		{
-			status_.SetPaneText(0, L"");
-		}
-	}
+	CString str;
+	str.Format(L"%d/%d", (int)idx, (int)total);
+	status_.SetPaneText(0, str);
 	return true;
 }
 
@@ -302,14 +230,11 @@ BOOL CSearchDlg::OnInitDialog()
 	{
 		if (this_.browser)
 		{
-			CComPtr<IHTMLTxtRange> range;
-			if (this_.browser->GetSelectedTxtRange(range))
+			std::wstring str;
+			//[pcr-web] GetSelectedTxtRange replaced by GetSelectedText
+			if (this_.browser->GetSelectedText(str) && !str.empty())
 			{
-				CComBSTR str;
-				if (SUCCEEDED(range->get_text(&str)))
-				{
-					m_xcEdit.SetWindowText(CString(str));
-				}
+				m_xcEdit.SetWindowText(CString(str.c_str()));
 			}
 		}
 	}

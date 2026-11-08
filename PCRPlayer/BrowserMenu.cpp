@@ -4,18 +4,7 @@
 
 namespace utl {
 
-// MsHtmHst.h ÇÃíËã`Ç™å√Ç¢ÇΩÇﬂèëÇ´ä∑Ç¶
-
-#ifdef CONTEXT_MENU_VSCROLL
-#undef CONTEXT_MENU_VSCROLL
-#endif
-
-#ifdef CONTEXT_MENU_HSCROLL
-#undef CONTEXT_MENU_HSCROLL
-#endif
-
-#define CONTEXT_MENU_VSCROLL 9
-#define CONTEXT_MENU_HSCROLL 10
+//[pcr-web] former CONTEXT_MENU_* ids (see PCRMENU_* in CustomDHtmlDialog.h)
 
 std::wstring ContextMenu::text_;
 
@@ -37,22 +26,22 @@ std::wstring ContextMenu::pop()
 }
 
 
-HRESULT ContextMenu::show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, IDispatch* disp, int submenu, bool check, const std::wstring& url)
+HRESULT ContextMenu::show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, const PcrElement& el, int submenu, bool check, const std::wstring& url)
 {
-	//CONTEXT_MENU_DEFAULT
-	//CONTEXT_MENU_IMAGE
-	//CONTEXT_MENU_CONTROL
-	//CONTEXT_MENU_TABLE
-	//CONTEXT_MENU_TEXTSELECT
-	//CONTEXT_MENU_ANCHOR
-	//CONTEXT_MENU_UNKNOWN
-	//CONTEXT_MENU_VSCROLL
-	//CONTEXT_MENU_HSCROLL
+	//PCRMENU_DEFAULT
+	//PCRMENU_IMAGE
+	//PCRMENU_CONTROL
+	//PCRMENU_TABLE
+	//PCRMENU_TEXTSELECT
+	//PCRMENU_ANCHOR
+	//PCRMENU_UNKNOWN
+	//PCRMENU_VSCROLL
+	//PCRMENU_HSCROLL
 
 	switch (menuID)
 	{
-	case CONTEXT_MENU_VSCROLL:
-	case CONTEXT_MENU_HSCROLL:
+	case PCRMENU_VSCROLL:
+	case PCRMENU_HSCROLL:
 		return S_FALSE;
 	}
 
@@ -73,17 +62,13 @@ HRESULT ContextMenu::show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, ID
 	bool anchor = false;
 	bool ref = false;
 	bool href = false;
-	if (menuID == CONTEXT_MENU_ANCHOR)
+	if (menuID == PCRMENU_ANCHOR)
 	{
-		if (disp)
+		if (el.valid())
 		{
-			CComQIPtr<IHTMLElement> element(disp);
-			if (element)
 			{
-				CComBSTR name;
-				if (SUCCEEDED(element->get_className(&name)))
 				{
-					extract = CString(name).GetString();
+					extract = el.cls;
 					bbs::URIConvert cnv;
 					bbs::URIConvert::Result res;
 					if (cnv(extract, res))
@@ -240,19 +225,13 @@ HRESULT ContextMenu::show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, ID
 		}
 	case IDM_CONTEXT_LINK_COPY:
 		{
-			if (!disp) { break; }
-			CComQIPtr<IHTMLAnchorElement> anchor(disp);
-			if (!anchor) { break; }
-			dhtml->CopyAnchorHref(anchor);
+			dhtml->CopyAnchorHref(el);
 			break;
 		}
 	case IDM_CONTEXT_LINK_BBS_BROWSER:
 		{
-			if (!disp) { break; }
-			CComQIPtr<IHTMLAnchorElement> anchor(disp);
-			if (!anchor) { break; }
 			std::wstring href;
-			if (dhtml->GetAnchorHref(anchor, href))
+			if (dhtml->GetAnchorHref(el, href))
 			{
 				put(href);
 				AfxGetMainWnd()->PostMessage(WM_COMMAND, IDM_CONTEXT_BBS_BROWSER);
@@ -261,11 +240,8 @@ HRESULT ContextMenu::show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, ID
 		}
 	case IDM_CONTEXT_LINK_WEB_BROWSER:
 		{
-			if (!disp) { break; }
-			CComQIPtr<IHTMLAnchorElement> anchor(disp);
-			if (!anchor) { break; }
 			std::wstring href;
-			if (dhtml->GetAnchorHref(anchor, href))
+			if (dhtml->GetAnchorHref(el, href))
 			{
 				utl::selectExecute(gl_.value.detail.browser.def, gl_.value.detail.browser.web, href);
 			}
@@ -278,14 +254,10 @@ HRESULT ContextMenu::show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, ID
 		}
 	case IDM_CONTEXT_SEARCH:
 		{
-			CComPtr<IHTMLTxtRange> range;
-			if (dhtml->GetSelectedTxtRange(range))
+			std::wstring str;
+			if (dhtml->GetSelectedText(str))
 			{
-				CComBSTR str;
-				if (SUCCEEDED(range->get_text(&str)))
-				{
-					put(std::wstring(CString(str).GetString()));
-				}
+				put(str);
 			}
 
 			AfxGetMainWnd()->PostMessage(WM_COMMAND, IDM_CONTEXT_SEARCH);
@@ -293,14 +265,10 @@ HRESULT ContextMenu::show(CCustomDHtmlDialog* dhtml, DWORD menuID, POINT* pt, ID
 		}
 	case IDM_CONTEXT_EXTRACT:
 		{
-			CComPtr<IHTMLTxtRange> range;
-			if (dhtml->GetSelectedTxtRange(range))
+			std::wstring str;
+			if (dhtml->GetSelectedText(str))
 			{
-				CComBSTR str;
-				if (SUCCEEDED(range->get_text(&str)))
-				{
-					put(std::wstring(CString(str).GetString()));
-				}
+				put(str);
 			}
 
 			AfxGetMainWnd()->PostMessage(WM_COMMAND, IDM_CONTEXT_EXTRACT);
