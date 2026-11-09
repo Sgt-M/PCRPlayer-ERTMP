@@ -13,6 +13,15 @@ namespace pcrfilters
 {
 
 static const wchar_t* FILTER_STAMP = L"LAV0.83-MPCVR0.11.1.2636";
+// A 32-bit in-proc server must live in the 32-bit HKCU\Software\Classes view
+// (WOW6432Node); a 64-bit one in the 64-bit view. Registering a bundled x86
+// filter into the 64-bit view makes CoCreateInstance from THIS 32-bit process
+// miss it. Pick the view matching the current process bitness.
+#ifdef _WIN64
+static const DWORD REG_VIEW = KEY_WOW64_64KEY;
+#else
+static const DWORD REG_VIEW = KEY_WOW64_32KEY;
+#endif
 // CLSID_LegacyAmFilterCategory
 static const wchar_t* LEGACY_CAT = L"{083863F1-70DE-11d0-BD40-00A0C911CE86}";
 
@@ -46,7 +55,7 @@ static HRESULT SetStr(HKEY root, LPCWSTR sub, LPCWSTR val, LPCWSTR data)
 {
 	HKEY hk = NULL;
 	LONG lr = ::RegCreateKeyExW(root, sub, 0, NULL, REG_OPTION_NON_VOLATILE,
-		KEY_SET_VALUE | KEY_WOW64_64KEY, NULL, &hk, NULL);
+		KEY_SET_VALUE | REG_VIEW, NULL, &hk, NULL);
 	if (lr != ERROR_SUCCESS) { return HRESULT_FROM_WIN32(lr); }
 	lr = ::RegSetValueExW(hk, val, 0, REG_SZ, (const BYTE*)data,
 		(DWORD)((lstrlenW(data) + 1) * sizeof(wchar_t)));
@@ -58,7 +67,7 @@ static HRESULT EnsureEmptyKey(HKEY root, LPCWSTR sub)
 {
 	HKEY hk = NULL;
 	LONG lr = ::RegCreateKeyExW(root, sub, 0, NULL, REG_OPTION_NON_VOLATILE,
-		KEY_READ | KEY_WOW64_64KEY, NULL, &hk, NULL);
+		KEY_READ | REG_VIEW, NULL, &hk, NULL);
 	if (hk) { ::RegCloseKey(hk); }
 	return HRESULT_FROM_WIN32(lr);
 }

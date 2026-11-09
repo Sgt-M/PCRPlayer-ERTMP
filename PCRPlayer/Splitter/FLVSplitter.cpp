@@ -1081,7 +1081,7 @@ HRESULT CFLVSplitterFilter::CreateOutputs(IAsyncReader* pAsyncReader)
 						UINT32 ew = 0, eh = 0;
 						bool built = false;
 						__int64 cfgPos = m_pFile->GetPos();
-						if (next > cfgPos && (next - cfgPos) <= (__int64)t.DataSize)
+						if ((__int64)next > cfgPos && ((__int64)next - cfgPos) <= (__int64)t.DataSize)
 						{
 							UINT32 cfgSize = (UINT32)(next - cfgPos);
 							std::vector<BYTE> cfgData(cfgSize);
