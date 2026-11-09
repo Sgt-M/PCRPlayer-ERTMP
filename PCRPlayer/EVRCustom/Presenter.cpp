@@ -1200,6 +1200,14 @@ HRESULT EVRCustomPresenter::RenegotiateMediaType()
 
 				SIZE size = { (LONG)width, (LONG)height };
 				m_NativeVideoSize = size;
+
+				//[pcr-aspect] the first SetVideoPosition usually ran while the native
+				//size was still 0 (AspectRect = full dest = stretched). Refresh the
+				//letterbox rect now that we know it, without waiting for a resize.
+				if (m_pD3DPresentEngine && width && height)
+				{
+					(void)m_pD3DPresentEngine->SetAspectRect(size);
+				}
 			}
 		}
 

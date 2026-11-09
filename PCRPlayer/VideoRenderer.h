@@ -172,16 +172,46 @@ interface __declspec(uuid("37CBDF10-D65E-4E5A-8F37-40E0C8EA1695")) IExFilterConf
 //[pcr-video] CLSID of the MPC Video Renderer filter (registered by the app or user)
 extern const CLSID CLSID_PcrMpcVideoRenderer;
 
+//[pcr-aspect] defined in VideoRenderer.cpp (subclass hooks)
+LRESULT CALLBACK MpcAspectSubclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+LRESULT CALLBACK MpcChildPosSubclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
 class MpcVideoRenderer : public IBaseVideoRenderer {
 	CComPtr<IVideoWindow> win_;
 	CComPtr<IBasicVideo> bvideo_;   //[pcr-video] render rect (MPC VR needs IBasicVideo)
 	RECT lastdst_;
+	RECT lastfit_;                   //[pcr-aspect] last aspect-fit destination applied
+	bool fitPending_;                //[pcr-aspect] native size not known yet -> retry
+
 	HWND embedHwnd_;                 //[pcr-video] deferred embed (UI thread only)
+	HWND childHwnd_;                 //[pcr-aspect] MPC VR's own video child window
+	int childFitX_, childFitY_;        //[pcr-aspect] forced position for the child
+	bool childForced() const { return childHwnd_ != NULL && (childFitX_ != 0 || childFitY_ != 0); }
+	friend LRESULT CALLBACK MpcChildPosSubclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+	int childX() const { return childFitX_; }
+	int childY() const { return childFitY_; }
 	bool embedded_;
 
+	//[pcr-aspect] MPC VR renders exactly the IBasicVideo destination rect, so the
+	//player must pass a contain-fit (letterboxed/pillarboxed) rect itself.
+	void applyDest(int w, int h);
+	HWND FindMpcChildWindow();           //[pcr-aspect] locate MPC VR's child window
+
 public:
-	MpcVideoRenderer() : embedHwnd_(NULL), embedded_(false) { ::SetRectEmpty(&lastdst_); }
-	~MpcVideoRenderer() {}
+	MpcVideoRenderer() : embedHwnd_(NULL), childHwnd_(NULL), childFitX_(0), childFitY_(0), embedded_(false), fitPending_(false) { ::SetRectEmpty(&lastdst_); ::SetRectEmpty(&lastfit_); }
+	~MpcVideoRenderer()
+	{
+		//[pcr-aspect] drop the retry hook before 'this' goes away
+		if (embedHwnd_) {
+			if (fitPending_) { ::KillTimer(embedHwnd_, 0x5EC1); }
+			::RemoveWindowSubclass(embedHwnd_, MpcAspectSubclass, 0);
+		}
+		if (childHwnd_) { ::RemoveWindowSubclass(childHwnd_, MpcChildPosSubclass, 1); }
+	}
+
+	//[pcr-aspect] internal: WM_TIMER retry hook plumbing (see VideoRenderer.cpp)
+	bool retryFit();
+	void invalidateTimer();
 
 	operator IBaseFilter*() { return render_; }
 	operator CComPtr<IBaseFilter>&() { return render_; }

@@ -1,4 +1,8 @@
 #include "stdafx.h"
+#include <commctrl.h>
+
+#pragma comment(lib, "comctl32.lib")
+//[pcr-aspect] SetWindowSubclass
 
 namespace dsp {
 
@@ -540,6 +544,138 @@ bool MpcVideoRenderer::repaint(HDC hdc)
 	return false;
 }
 
+//[pcr-aspect] MPC VR stretches exactly the destination rect it is given via
+//IBasicVideo (and renders nothing without one), so contain-fit math with the
+//video's native size has to happen player-side: letterbox/pillarbox centered.
+void MpcVideoRenderer::applyDest(int w, int h)
+{
+	if (!bvideo_ || w <= 0 || h <= 0) { return; }
+
+	long vw = 0, vh = 0;
+	if (FAILED(bvideo_->GetVideoSize(&vw, &vh))) { vw = vh = 0; }
+
+	if (vw <= 0 || vh <= 0)
+	{
+		// size not negotiated yet: place full rect for now, retry via timer
+		bvideo_->SetDestinationPosition(0, 0, w, h);
+		::SetRectEmpty(&lastfit_);
+		if (!fitPending_ && embedHwnd_) {
+			fitPending_ = true;
+			::SetTimer(embedHwnd_, 0x5EC1, 500, NULL);
+		}
+		return;
+	}
+
+	int aw, ah;
+	if ((double)w * (double)vh > (double)h * (double)vw) {
+		// window wider than video -> pillarbox (bars left/right)
+		ah = h;
+		aw = (int)((double)h * (double)vw / (double)vh + 0.5);
+		if (aw > w) { aw = w; }
+	} else {
+		// window taller -> letterbox (bars top/bottom)
+		aw = w;
+		ah = (int)((double)w * (double)vh / (double)vw + 0.5);
+		if (ah > h) { ah = h; }
+	}
+	const int px = (w - aw) / 2, py = (h - ah) / 2;
+
+	RECT fit;
+	::SetRect(&fit, px, py, px + aw, py + ah);
+	if (::EqualRect(&fit, &lastfit_)) { fitPending_ = false; return; }
+	lastfit_ = fit;
+	fitPending_ = false;
+
+	//[pcr-aspect] MPC VR's render target = videoRect INTERSECT windowRect, and the
+	//IBasicVideo destination is clamped to the swapchain; letterboxing is done by
+	//sizing the child window itself to the fit rect and keeping the destination
+	//full inside it (same mechanism MPC-HC uses for its video pane).
+	//[pcr-aspect] keep MPC VR's internal geometry at origin 0,0 with the fit
+	//size (its render target = videoRect INTERSECT windowRect, both in its own
+	//space), then physically center the child window in the player client.
+	if (win_) {
+		win_->SetWindowPosition(0, 0, aw, ah);
+	}
+	HRESULT dh = bvideo_->SetDestinationPosition(0, 0, aw, ah);
+	if (!childHwnd_ || !::IsWindow(childHwnd_)) {
+		childHwnd_ = FindMpcChildWindow();
+		if (childHwnd_) { ::SetWindowSubclass(childHwnd_, MpcChildPosSubclass, 1, (DWORD_PTR)this); }
+	}
+	if (childHwnd_ && ::IsWindow(childHwnd_)) {
+		//[pcr-aspect] MPC VR re-applies its internal windowRect (origin 0,0) on
+		//every window-position change, so the centering offset must be forced
+		//from a WM_WINDOWPOSCHANGING hook on the child window.
+		childFitX_ = fit.left;
+		childFitY_ = fit.top;
+		::MoveWindow(childHwnd_, fit.left, fit.top, aw, ah, TRUE);
+	}
+}
+
+bool MpcVideoRenderer::retryFit()
+{
+	if (!embedded_ || !bvideo_) { return false; }
+	if (!embedHwnd_ || !::IsWindow(embedHwnd_)) { return false; }
+	RECT rc; ::GetClientRect(embedHwnd_, &rc);
+	applyDest(rc.right - rc.left, rc.bottom - rc.top);
+	return fitPending_;   // false -> timer can be killed
+}
+
+void MpcVideoRenderer::invalidateTimer()
+{
+	fitPending_ = false;
+}
+
+//[pcr-aspect] retry hook: the embed happens before the decoder has set a size
+//on the renderer pin, so keep asking until the first fit lands.
+//[pcr-aspect] MPC VR's video window class is "VRWindow"; it appears as a
+//descendant of the embed host once the graph is running.
+struct MpcChildFinder { HWND found; };
+static BOOL CALLBACK MpcChildEnumProc(HWND hwnd, LPARAM lp)
+{
+	wchar_t cls[64];
+	if (::GetClassNameW(hwnd, cls, 64) && 0 == lstrcmpW(cls, L"VRWindow")) {
+		((MpcChildFinder*)lp)->found = hwnd;
+		return FALSE;
+	}
+	return TRUE;
+}
+HWND MpcVideoRenderer::FindMpcChildWindow()
+{
+	if (!embedHwnd_ || !::IsWindow(embedHwnd_)) { return NULL; }
+	MpcChildFinder f = { NULL };
+	::EnumChildWindows(embedHwnd_, MpcChildEnumProc, (LPARAM)&f);
+	return f.found;
+}
+
+//[pcr-aspect] force MPC VR's child window to the letterbox position even when
+//the filter tries to snap its windowRect origin back to (0,0).
+LRESULT CALLBACK MpcChildPosSubclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR id, DWORD_PTR ref)
+{
+	MpcVideoRenderer* self = (MpcVideoRenderer*)ref;
+	if (msg == WM_WINDOWPOSCHANGING && self)
+	{
+		WINDOWPOS* p = (WINDOWPOS*)lp;
+		if (self->childForced())
+		{
+			p->x = self->childX();
+			p->y = self->childY();
+		}
+	}
+	return ::DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+LRESULT CALLBACK MpcAspectSubclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR ref)
+{
+	MpcVideoRenderer* self = (MpcVideoRenderer*)ref;
+	if (msg == WM_TIMER && wp == 0x5EC1)
+	{
+		if (!self || !self->retryFit()) { ::KillTimer(hwnd, 0x5EC1); return 0; }
+		return 0;
+	}
+	if (msg == WM_DESTROY && self) { self->invalidateTimer(); }
+	return ::DefSubclassProc(hwnd, msg, wp, lp);
+}
+
 bool MpcVideoRenderer::setVideoPosition(RECT& dst)
 {
 	if (!render_) { return false; }
@@ -559,18 +695,22 @@ bool MpcVideoRenderer::setVideoPosition(RECT& dst)
 		win_->put_WindowStyle(WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
 		win_->put_Visible(1L); // OA_TRUE
 		bvideo_ = render_;
-		if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w0, h0); }
+		//[pcr-aspect] MPC VR's child window appears only when the graph runs and
+		//is not exposed via IOleWindow -> located lazily in applyDest.
+		applyDest(w0, h0);
+		::SetWindowSubclass(embedHwnd_, MpcAspectSubclass, 0, (DWORD_PTR)this);
 		embedded_ = true;
 		::SetRect(&lastdst_, 0, 0, w0, h0);
 		return true;
 	}
 
 	int w = dst.right - dst.left, h = dst.bottom - dst.top;
-	if (::EqualRect(&lastdst_, &dst)) { return true; }
-	lastdst_ = dst;
-	//[pcr-video] push window rect and video (destination) rect together.
-	HRESULT hr = win_->SetWindowPosition(dst.left, dst.top, w, h);
-	if (bvideo_) { bvideo_->SetDestinationPosition(0, 0, w, h); }
+	HRESULT hr = S_OK;
+	if (!::EqualRect(&lastdst_, &dst)) {
+		lastdst_ = dst;
+		hr = win_->SetWindowPosition(dst.left, dst.top, w, h);
+	}
+	applyDest(w, h);
 	return SUCCEEDED(hr);
 }
 
