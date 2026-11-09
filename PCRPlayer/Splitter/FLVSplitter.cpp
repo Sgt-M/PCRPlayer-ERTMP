@@ -355,11 +355,16 @@ bool CFLVSplitterFilter::ReadTag(VideoTag& vt)
 	if (!m_pFile->GetRemaining()) { return false; }
 	vt.FourCC = _byteswap_ulong((UINT32)m_pFile->BitRead(32)); // -> MAKEFOURCC order
 
-	// PacketTypeCodedFrames carries the SI24 composition time offset; every
-	// other packet type has no timing field (SequenceStart carries the codec
+	// PacketTypeCodedFrames carries the SI24 composition time offset ONLY for
+	// HEVC fourCCs (veovera v1: the field is reserved/absent for AV1/VP9, and
+	// live AV1 encoders put OBU data right after the fourCC). Every other
+	// packet type has no timing field (SequenceStart carries the codec
 	// configuration record, Metadata carries AMF, and the rest are not
 	// delivered).
-	if (vt.PacketType == 1) {
+	if (vt.PacketType == 1 &&
+		(vt.FourCC == MAKEFOURCC('h','v','c','1') ||
+		 vt.FourCC == MAKEFOURCC('h','v','c','C') ||
+		 vt.FourCC == MAKEFOURCC('h','e','v','1'))) {
 		if (!m_pFile->GetRemaining()) { return false; }
 		UINT32 ts = (UINT32)m_pFile->BitRead(24);
 		vt.TsOffset = (ts + 0xff800000) ^ 0xff800000; // sign extension
@@ -443,20 +448,86 @@ void hevc_skip_ptl(ErtmpBitStream& bs, UINT32 maxSub)
 }
 } // namespace
 
+//[pcr-ertmp] walk AV1 config OBUs and parse the sequence header for
+//max_frame_width/height (av1-spec 2024 layout: seq_profile(3) still_picture(1)
+//reduced_still_picture_header(1) at the top). Returns false when the bits do
+//not decode to a sane frame size (e.g. pre-2024 encoder layouts).
+static bool Av1SeqHeaderDims(const BYTE* p, size_t n, UINT32& w, UINT32& h)
+{
+	w = h = 0;
+	size_t i = 0;
+	while (i < n) {
+		BYTE hdr = p[i++];
+		if (hdr & 0x80) { return false; }
+		UINT32 type = (hdr >> 3) & 0x0F;
+		if ((hdr >> 2) & 1) { if (i >= n) { return false; } i++; }
+		if (!((hdr >> 1) & 1)) { return false; }
+		size_t obuSize = 0; int shift = 0; BYTE b = 0;
+		for (int k = 0; k < 4; ++k) {
+			if (i >= n) { return false; }
+			b = p[i++];
+			obuSize |= (size_t)(b & 0x7F) << shift;
+			shift += 7;
+			if (!(b & 0x80)) { break; }
+		}
+		if (i + obuSize > n) { return false; }
+		if (type == 1) {
+			ErtmpBitStream bs(p + i, obuSize);
+			UINT32 profile = (UINT32)bs.read(3);
+			bs.skip(1); // still_picture
+			UINT32 reduced = (UINT32)bs.read(1);
+			if (profile > 3) { return false; }
+			if (reduced) {
+				bs.skip(5);
+			} else {
+				UINT32 dmip = 0;
+				if (bs.read(1)) {
+					bs.skip(64);
+					if (bs.read(1)) { bs.uexp(); }
+					dmip = (UINT32)bs.read(1);
+					if (dmip) { bs.skip(5 + 32 + 5 + 5); }
+				}
+				UINT32 iddp = (UINT32)bs.read(1);
+				UINT32 cnt1 = (UINT32)bs.read(5);
+				for (UINT32 op = 0; op <= cnt1 && op < 32; ++op) {
+					bs.skip(12);
+					UINT32 lvl = (UINT32)bs.read(5);
+					if (lvl > 7) { bs.skip(1); }
+					if (dmip && bs.read(1)) {
+						UINT32 dl = (UINT32)bs.read(4);
+						if (dl > 0) { bs.skip(dl); }
+					}
+					if (iddp && bs.read(1)) { bs.skip(4); }
+				}
+			}
+			UINT32 wb = (UINT32)bs.read(4) + 1;
+			UINT32 hb = (UINT32)bs.read(4) + 1;
+			if (wb > 16 || hb > 16) { return false; }
+			UINT32 mw = (UINT32)bs.read(wb) + 1;
+			UINT32 mh = (UINT32)bs.read(hb) + 1;
+			if (mw >= 1 && mw <= 16384 && mh >= 1 && mh <= 16384) {
+				w = mw; h = mh;
+				return true;
+			}
+			return false;
+		}
+		i += obuSize;
+	}
+	return false;
+}
+
 //[pcr-ertmp] Build candidate media types from an enhanced-video sequence-start
 //configuration record located at the current file position. Several subtype
 //spellings are added so the graph builder finds one the installed decoder
 //accepts (LAV registers with FFmpeg-style fourCC subtypes).
 bool CFLVSplitterFilter::BuildEnhancedVideoTypes(UINT32 fourcc, CMediaType&,
-	CAtlArray<CMediaType>& mts, UINT32& w, UINT32& h)
+	const BYTE* cfgData, DWORD cfgLen, CAtlArray<CMediaType>& mts, UINT32& w, UINT32& h)
 {
 	w = h = 0;
 
-	__int64 avail = m_pFile->GetRemaining();
-	if (avail <= 0 || avail > 512 * 1024) { return false; }
-
-	std::vector<BYTE> cfg((size_t)avail);
-	m_pFile->ByteRead(cfg.data(), (DWORD)cfg.size());
+	if (!cfgData || cfgLen == 0) { return false; }
+	std::vector<BYTE> cfg(cfgLen);
+	memcpy(cfg.data(), cfgData, cfgLen);
 
 	CMediaType mt;
 	mt.SetSampleSize(1);
@@ -545,12 +616,18 @@ bool CFLVSplitterFilter::BuildEnhancedVideoTypes(UINT32 fourcc, CMediaType&,
 	}
 
 	if (fourcc == MAKEFOURCC('a','v','0','1')) {
-		// AV1CodecConfigurationRecord: 4 fixed bytes + configOBUs. Dimensions
-		// are left at 0; the FFmpeg-based decoder reads them from the
-		// sequence header OBU.
+		// AV1CodecConfigurationHeader: 4 fixed bytes, ConfigOBUs follow. Parse
+		// the max frame size from the sequence header OBU: a 0x0 media type
+		// makes LAV propose a 0x0 output type which the renderer rejects, so
+		// the decoder chain silently fails to connect on live AV1 streams.
 		if (cfg.size() < 4) { return false; }
-		vih->hdr.bmiHeader.biWidth = 0;
-		vih->hdr.bmiHeader.biHeight = 0;
+		UINT32 aw = 0, ah = 0;
+		if (cfg.size() > 4) { Av1SeqHeaderDims(cfg.data() + 4, cfg.size() - 4, aw, ah); }
+		vih->hdr.bmiHeader.biWidth = (LONG)aw;
+		vih->hdr.bmiHeader.biHeight = (LONG)ah;
+		vih->hdr.dwPictAspectRatioX = (LONG)(aw ? aw : 16);
+		vih->hdr.dwPictAspectRatioY = (LONG)(ah ? ah : 9);
+		w = aw; h = ah;
 		vih->hdr.dwPictAspectRatioX = 16;
 		vih->hdr.dwPictAspectRatioY = 9;
 		const UINT32 subs[] = { MAKEFOURCC('A','V','0','1'), MAKEFOURCC('A','V','1',' '),
@@ -1002,7 +1079,16 @@ HRESULT CFLVSplitterFilter::CreateOutputs(IAsyncReader* pAsyncReader)
 					if (vt.PacketType == 0 && IsEnhancedVideoFourCC(vt.FourCC))
 					{
 						UINT32 ew = 0, eh = 0;
-						if (BuildEnhancedVideoTypes(vt.FourCC, mt, mts, ew, eh))
+						bool built = false;
+						__int64 cfgPos = m_pFile->GetPos();
+						if (next > cfgPos && (next - cfgPos) <= (__int64)t.DataSize)
+						{
+							UINT32 cfgSize = (UINT32)(next - cfgPos);
+							std::vector<BYTE> cfgData(cfgSize);
+							m_pFile->ByteRead(cfgData.data(), cfgSize);
+							built = BuildEnhancedVideoTypes(vt.FourCC, mt, cfgData.data(), cfgSize, mts, ew, eh);
+						}
+						if (built)
 						{
 							fTypeFlagsVideo = false;
 							addLog(L"ertmp: video ex fourcc=0x%08X %ux%u pin", vt.FourCC, ew, eh);

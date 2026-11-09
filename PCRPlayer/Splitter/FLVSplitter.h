@@ -146,7 +146,7 @@ CFLVSplitterFilter
 	//[pcr-ertmp] parse codec width/height from the sequence-start record and
 	//fill a candidate media type list (multiple subtypes so the graph builder
 	//can find one the installed decoder accepts). Returns false = unsupported.
-	bool BuildEnhancedVideoTypes(UINT32 fourcc, CMediaType& base, CAtlArray<CMediaType>& mts, UINT32& w, UINT32& h);
+	bool BuildEnhancedVideoTypes(UINT32 fourcc, CMediaType&, const BYTE* cfgData, DWORD cfgLen, CAtlArray<CMediaType>& mts, UINT32& w, UINT32& h);
 	bool BuildEnhancedAudioTypes(UINT32 fourcc, const BYTE* cfg, DWORD cfgSize, CAtlArray<CMediaType>& mts);
 
 	void NormalSeek(REFERENCE_TIME rt);
