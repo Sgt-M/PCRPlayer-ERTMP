@@ -12,6 +12,31 @@
 
 IMPLEMENT_DYNAMIC(CDetailDecoderDlg, CDialog)
 
+//[pcr-video] The bundled filters register themselves per-user (HKCU), but the
+// DShow category enumerator (HKLM scope) never shows such filters - on a clean
+// machine the preferred-decoder list would stay empty and intelligent connect
+// falls back to the OS decoder. Re-present them from their registration state
+// (HKCR opens DO merge HKCU) and resolve their CLSIDs from this table.
+namespace {
+struct BundledFilter { LPCWSTR name; LPCWSTR clsid; };
+const BundledFilter g_bundledFilters[] = {
+	{ L"LAV Video Decoder", L"{EE30215D-164F-4A92-A4EB-9D4C13390F9F}" },
+	{ L"LAV Audio Decoder", L"{E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491}" },
+	{ L"LAV Splitter",      L"{B98D13E7-55DB-4385-A33D-09FD1BA26338}" },
+};
+bool BundledFilterRegistered(const BundledFilter& b)
+{
+	wchar_t sub[128];
+	wsprintfW(sub, L"CLSID\\%s\\InprocServer32", b.clsid);
+	HKEY hk = NULL;
+	if (RegOpenKeyExW(HKEY_CLASSES_ROOT, sub, 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+		RegCloseKey(hk);
+		return true;
+	}
+	return false;
+}
+}
+
 CDetailDecoderDlg::CDetailDecoderDlg(CWnd* pParent /*=NULL*/)
 	: CDialog(CDetailDecoderDlg::IDD, pParent)
 {
@@ -129,6 +154,15 @@ void CDetailDecoderDlg::EnumFilterMoniker(std::vector<FilterMoniker>& data)
 
 bool CDetailDecoderDlg::FilterMonikerToGUID(const FilterMoniker& moniker, GUID* guid)
 {
+	//[pcr-video] bundled filters are not enumerated; resolve from the table
+	for (size_t i = 0; i < _countof(g_bundledFilters); ++i) {
+		if (lstrcmpiW(moniker.name.c_str(), g_bundledFilters[i].name) != 0) { continue; }
+		if (BundledFilterRegistered(g_bundledFilters[i])
+			&& SUCCEEDED(CLSIDFromString(g_bundledFilters[i].clsid, guid))) {
+			return true;
+		}
+	}
+
 	bool res = false;
 	EnumFilterMonikerForeach(CLSID_LegacyAmFilterCategory, CDEF_DEVMON_CMGR_DEVICE|CDEF_DEVMON_DMO|CDEF_DEVMON_FILTER,
 		[&](const CComPtr<IMoniker>& moni, const FilterMoniker& fm)->bool{
@@ -178,6 +212,21 @@ BOOL CDetailDecoderDlg::OnInitDialog()
 	// コンボボックス
 	data_.clear();
 	EnumFilterMoniker(data_);
+
+	//[pcr-video] append bundled filters the enumerator cannot see (per-user reg)
+	for (size_t i = 0; i < _countof(g_bundledFilters); ++i) {
+		if (!BundledFilterRegistered(g_bundledFilters[i])) { continue; }
+		bool dup = false;
+		for (auto it = data_.begin(); it != data_.end(); ++it) {
+			if (lstrcmpiW(it->name.c_str(), g_bundledFilters[i].name) == 0) { dup = true; break; }
+		}
+		if (!dup) {
+			FilterMoniker fm;
+			fm.name = g_bundledFilters[i].name;
+			fm.path = g_bundledFilters[i].clsid; //[pcr-video] resolved by name in FilterMonikerToGUID
+			data_.push_back(fm);
+		}
+	}
 
 	std::stable_sort(data_.begin(), data_.end(),
 		[](const FilterMoniker& l, const FilterMoniker& r)->bool{
