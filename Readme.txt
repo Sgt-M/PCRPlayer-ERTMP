@@ -1,9 +1,15 @@
-Visual Studio Community 2015 / Visual C++ 2015 ‚ÅŠJ”­‚µ‚Ä‚¢‚Ü‚·
+Visual Studio Community 2026 / Visual C++ 2015 ã§é–‹ç™ºã—ã¦ã„ã¾ã™
 
-ƒrƒ‹ƒh‚É‚Í•W€ƒ‰ƒCƒuƒ‰ƒŠ‚ÆWindowsSDK‚Ì‘¼‚É
+ãƒ“ãƒ«ãƒ‰ã«ã¯æ¨™æº–ãƒ©ã‚¤ãƒ–ãƒ©ãƒªã¨WindowsSDKã®ä»–ã«
 	DirectX SDK (June 2010)
-	Windows SDK 7.1 ‚Ì Samples ‚ÉŠÜ‚Ü‚ê‚é DirectShow BaseClasses
+	Windows SDK 7.1 ã® Samples ã«å«ã¾ã‚Œã‚‹ DirectShow BaseClasses
 	Boost C++ Libraries
-ˆÈã‚ª•K—v‚É‚È‚è‚Ü‚·
+ä»¥ä¸ŠãŒå¿…è¦ã«ãªã‚Šã¾ã™
 
-DirectShow BaseClasses ‚Æ Boost C++ Libraries ‚Í‚»‚ê‚¼‚êƒ‰ƒCƒuƒ‰ƒŠ‚Ìƒrƒ‹ƒh‚ª•K—v‚Å‚·
+DirectShow BaseClasses ã¨ Boost C++ Libraries ã¯ãã‚Œãã‚Œãƒ©ã‚¤ãƒ–ãƒ©ãƒªã®ãƒ“ãƒ«ãƒ‰ãŒå¿…è¦ã§ã™
+
+ãƒªãƒªãƒ¼ã‚¹ãƒ•ã‚¡ã‚¤ãƒ«ã«ã¯
+MPC Video Renderer		https://github.com/Aleksoid1978/VideoRenderer	GPL3.0
+ãŠã‚ˆã³
+LAV Filters				https://github.com/Nevcairiel/LAVFilters		GPL2.0
+ã®ãƒã‚¤ãƒŠãƒªãŒå«ã¾ã‚Œã¦ã„ã¾ã™ã€‚
