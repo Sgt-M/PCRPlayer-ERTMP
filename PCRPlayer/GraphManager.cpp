@@ -1,9 +1,30 @@
 #include "stdafx.h"
 
+//[pcr-vsr] LAV Video runtime settings interface (D3D11 hwaccel request)
+#include "LAVVideoSettings.h"
+
 
 
 
 namespace dsp {
+
+//[pcr-vsr] NVIDIA RTX VSR rides on the D3D11 video-processor path only;
+//LAV default DXVA2 copy-back breaks the driver hook. When the MPC VR renderer
+//is in use, ask this LAV Video instance for D3D11 copy-back via its runtime
+//config interface (the user global LAV registry settings stay untouched).
+//LAV docs: call before the filter is connected.
+static bool lavRequestD3D11(IBaseFilter* f)
+{
+	CComPtr<ILAVVideoSettings> s;
+	if (f == NULL || FAILED(f->QueryInterface(__uuidof(ILAVVideoSettings), (void**)&s)) || !s)
+		return false;
+	if (SUCCEEDED(s->SetRuntimeConfig(TRUE)) && s->CheckHWAccelSupport(HWAccel_D3D11) > 0)
+	{
+		s->SetHWAccel(HWAccel_D3D11);
+		return s->GetHWAccel() == HWAccel_D3D11;
+	}
+	return false;
+}
 
 #ifdef _DEBUG
 
@@ -273,6 +294,9 @@ bool GraphManager::render(
 		if (decVideo_)
 		{
 			graph_->AddFilter(decVideo_, decoder.video.name.c_str());
+			//[pcr-vsr] MPC VR wants a D3D11 NV12 feed for RTX VSR
+			if (video_ && video_->isMpcVr() && lavRequestD3D11(decVideo_))
+				addLog(L"pcrvsr: LAV -> D3D11 copy-back");
 		}
 	}
 
@@ -422,6 +446,9 @@ bool GraphManager::renderEx(
 		if (decVideo_)
 		{
 			graph_->AddFilter(decVideo_, decoder.video.name.c_str());
+			//[pcr-vsr] MPC VR wants a D3D11 NV12 feed for RTX VSR
+			if (video_ && video_->isMpcVr() && lavRequestD3D11(decVideo_))
+				addLog(L"pcrvsr: LAV -> D3D11 copy-back");
 		}
 	}
 
@@ -488,6 +515,9 @@ bool GraphManager::renderEx(
 				if (SUCCEEDED(lavVideo.CoCreateInstance(CLSID_LAVVideo, NULL, CLSCTX_INPROC_SERVER)))
 				{
 					graph_->AddFilter(lavVideo, L"LAV Video Decoder");
+					//[pcr-vsr] MPC VR wants a D3D11 NV12 feed for RTX VSR
+					if (video_ && video_->isMpcVr() && lavRequestD3D11(lavVideo))
+						addLog(L"pcrvsr: LAV -> D3D11 copy-back (explicit)");
 
 					CComPtr<IPin> lavIn;
 					{

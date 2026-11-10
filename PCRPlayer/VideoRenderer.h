@@ -108,6 +108,7 @@ public:
 	virtual bool getProcAmp(ProcAmpValue& value) { return false; }
 	virtual bool setNominalRange(int value) { return false; }
 	virtual bool setResizer(int type) { return false; }
+	virtual bool isMpcVr() const { return false; }	//[pcr-vsr] NVIDIA VSR chain gate
 	virtual bool isRunning(DWORD timeout);
 };
 
@@ -198,6 +199,7 @@ class MpcVideoRenderer : public IBaseVideoRenderer {
 	HWND FindMpcChildWindow();           //[pcr-aspect] locate MPC VR's child window
 
 public:
+	bool isMpcVr() const { return true; }	//[pcr-vsr]
 	MpcVideoRenderer() : embedHwnd_(NULL), childHwnd_(NULL), childFitX_(0), childFitY_(0), embedded_(false), fitPending_(false) { ::SetRectEmpty(&lastdst_); ::SetRectEmpty(&lastfit_); }
 	~MpcVideoRenderer()
 	{
