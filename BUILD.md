@@ -13,7 +13,7 @@ C:\vcpkg\vcpkg.exe install boost-xpressive boost-thread boost-filesystem boost-d
   --triplet x86-windows-static
 ```
 x64でビルドする場合は `--triplet x64-windows-static` も同様に実行。  
-※ CWDが `mimocode` 配下だと上位の `vcpkg.json` に吸われるので注意 (`VCPKG_MANIFEST_MODE=off` を付けるか別の場所で実行)。  
+※ CWDが 上位の `vcpkg.json` に吸われないように注意 (`VCPKG_MANIFEST_MODE=off` を付けるか別の場所で実行)。  
 ※ vcxproj の `$(VcpkgRoot)` (既定 `C:\vcpkg`) と `$(BoostTriplet)` で解決される。
 
 ### 2. DirectShow BaseClasses (strmbase.lib / strmbasd.lib)
@@ -49,6 +49,6 @@ flags: `/EHsc /W3 /MT(d) /DWIN32 /D_WINDOWS /DUNICODE /D_UNICODE /D_STDC_WANT_LI
 | `EVRCustom/D3DUtl.h/.cpp` | **D3DX(d3dx9)依存撤去**: shaderコンパイル/逆アセンブルを `d3dcompiler_47.dll`(Windows同梱) の `D3DCompile`/`D3DDisassemble` に置換。CreateTextureはD3D9 API直行。型は `D3D_SHADER_MACRO≡D3DXMACRO`、`ID3DBlob≡ID3DXBuffer` |
 | `Network.cpp` | `file_.assign(base(), path_.end())` → `path_.cend()` (現行MSVC STLの同一イテレータ型制約対応) |
 
-## 运行时依赖
+## 
 - DLL追加配布不要 (d3dx9_43.dll は不要化済み。d3dcompiler_47.dll / D3D9 / EVR / MFC静的リンク)
 - PeerCast視聴用: 別途 PeerCastノード or YP URL は従来通りアプリ設定
