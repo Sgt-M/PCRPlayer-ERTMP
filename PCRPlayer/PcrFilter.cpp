@@ -12,7 +12,7 @@
 namespace pcrfilters
 {
 
-static const wchar_t* FILTER_STAMP = L"LAV0.83-MPCVR0.11.1.2636";
+static const wchar_t* FILTER_STAMP = L"LAV0.83-MPCVR0.11.1.2636+p1";
 // A 32-bit in-proc server must live in the 32-bit HKCU\Software\Classes view
 // (WOW6432Node); a 64-bit one in the 64-bit view. Registering a bundled x86
 // filter into the 64-bit view makes CoCreateInstance from THIS 32-bit process
@@ -25,17 +25,33 @@ static const DWORD REG_VIEW = KEY_WOW64_32KEY;
 // CLSID_LegacyAmFilterCategory
 static const wchar_t* LEGACY_CAT = L"{083863F1-70DE-11d0-BD40-00A0C911CE86}";
 
-struct Entry { LPCWSTR clsid; LPCWSTR name; LPCWSTR file; };
+struct Entry { LPCWSTR clsid; LPCWSTR name; LPCWSTR file; int cat; };
 
+//[pcr-prop] ISpecifyPropertyPages of these filters return SEPARATE page-class
+// CLSIDs that OleCreatePropertyFrame CoCreates by CLSID. A full regsvr32
+// registers them too; without them the property dialogs silently fail on a
+// clean machine. cat=1 adds the legacy-filter category (must NOT be done for
+// page classes or they would show up as (broken) filters in enumerations).
 static const Entry g_tab[] =
 {
-	{ L"{EE30215D-164F-4A92-A4EB-9D4C13390F9F}", L"LAV Video Decoder",  L"LAVVideo.ax" },
-	{ L"{E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491}", L"LAV Audio Decoder",  L"LAVAudio.ax" },
-	{ L"{B98D13E7-55DB-4385-A33D-09FD1BA26338}", L"LAV Splitter",       L"LAVSplitter.ax" },
+	{ L"{EE30215D-164F-4A92-A4EB-9D4C13390F9F}", L"LAV Video Decoder",  L"LAVVideo.ax",    1 },
+	{ L"{E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491}", L"LAV Audio Decoder",  L"LAVAudio.ax",    1 },
+	{ L"{B98D13E7-55DB-4385-A33D-09FD1BA26338}", L"LAV Splitter",       L"LAVSplitter.ax", 1 },
+	// LAV property pages (page CLSIDs are identical in both bitness views;
+	// the host .ax differs -> the usual path check picks the right module)
+	{ L"{278407C2-558C-4BED-83A0-B6FA454200BD}", L"LAV Video Properties",      L"LAVVideo.ax",    0 },
+	{ L"{2D4D6F88-8B41-40A2-B297-3D722816648B}", L"LAV Video Format Settings", L"LAVVideo.ax",    0 },
+	{ L"{2D8F1801-A70D-48F4-B76B-7F5AE022AB54}", L"LAV Audio Properties",      L"LAVAudio.ax",    0 },
+	{ L"{C89FC33C-E60A-4C97-BEF4-ACC5762B6404}", L"LAV Audio Mixer",           L"LAVAudio.ax",    0 },
+	{ L"{BD72668E-6BFF-4CD1-8480-D465708B336B}", L"LAV Audio Format Settings", L"LAVAudio.ax",    0 },
+	{ L"{A19DE2F2-2F74-4927-8436-61129D26C141}", L"LAV Splitter Properties",   L"LAVSplitter.ax", 0 },
+	{ L"{56904B22-091C-4459-A2E6-B1F4F946B55F}", L"LAV Splitter Input Formats",L"LAVSplitter.ax", 0 },
 #ifdef _WIN64
-	{ L"{71F080AA-8661-4093-B15E-4F6903E77D0A}", L"MPC Video Renderer", L"MpcVideoRenderer64.ax" },
+	{ L"{71F080AA-8661-4093-B15E-4F6903E77D0A}", L"MPC Video Renderer", L"MpcVideoRenderer64.ax", 1 },
+	{ L"{DA46D181-07D6-441D-B314-019AEB10148A}", L"MainProp",           L"MpcVideoRenderer64.ax", 0 },
 #else
-	{ L"{71F080AA-8661-4093-B15E-4F6903E77D0A}", L"MPC Video Renderer", L"MpcVideoRenderer.ax" },
+	{ L"{71F080AA-8661-4093-B15E-4F6903E77D0A}", L"MPC Video Renderer", L"MpcVideoRenderer.ax", 1 },
+	{ L"{DA46D181-07D6-441D-B314-019AEB10148A}", L"MainProp",           L"MpcVideoRenderer.ax", 0 },
 #endif
 };
 
@@ -152,7 +168,7 @@ void EnsureRegistered()
 				(wsprintfW(sub, L"Software\\Classes\\CLSID\\%s\\InprocServer32", e.clsid), sub),
 				L"ThreadingModel", L"Both");
 		}
-		if (SUCCEEDED(hr))
+		if (SUCCEEDED(hr) && e.cat)
 		{
 			hr = EnsureEmptyKey(HKEY_CURRENT_USER,
 				(wsprintfW(sub, L"Software\\Classes\\CLSID\\%s\\Implemented Categories\\%s", e.clsid, LEGACY_CAT), sub));
