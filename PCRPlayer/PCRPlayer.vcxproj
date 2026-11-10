@@ -171,10 +171,11 @@ if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\
       <AdditionalIncludeDirectories>$(SolutionDir)third_party\webview2\build\native\include;$(SolutionDir)\third_party\directshow-baseclasses\src\Samples\Win7Samples\multimedia\directshow\baseclasses;$(VcpkgRoot)\installed\$(BoostTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><AdditionalOptions>-Zm300 /OPT:NOICF %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <AdditionalLibraryDirectories>$(SolutionDir)third_party\webview2\build\native\$(PlatformTarget);$(VcpkgRoot)\installed\$(BoostTriplet)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><AdditionalDependencies>WebView2LoaderStatic.lib;boost_thread-vc145-mt-x32-1_91.lib;boost_chrono-vc145-mt-x32-1_91.lib;boost_atomic-vc145-mt-x32-1_91.lib;boost_filesystem-vc145-mt-x32-1_91.lib;boost_date_time-vc145-mt-x32-1_91.lib;boost_iostreams-vc145-mt-x32-1_91.lib;boost_random-vc145-mt-x32-1_91.lib;boost_container-vc145-mt-x32-1_91.lib;zstd.lib;lzma.lib;bz2.lib;zs.lib;%(AdditionalDependencies)</AdditionalDependencies><SubSystem>Windows</SubSystem>
+                  <AdditionalLibraryDirectories>$(SolutionDir)third_party\webview2\build\native\$(PlatformTarget);$(VcpkgRoot)\installed\$(BoostTriplet)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><AdditionalDependencies>WebView2LoaderStatic.lib;boost_thread-vc145-mt-x32-1_91.lib;boost_chrono-vc145-mt-x32-1_91.lib;boost_atomic-vc145-mt-x32-1_91.lib;boost_filesystem-vc145-mt-x32-1_91.lib;boost_date_time-vc145-mt-x32-1_91.lib;boost_iostreams-vc145-mt-x32-1_91.lib;boost_random-vc145-mt-x32-1_91.lib;boost_container-vc145-mt-x32-1_91.lib;zstd.lib;lzma.lib;bz2.lib;zs.lib;%(AdditionalDependencies)</AdditionalDependencies><SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+    <AdditionalOptions>/MANIFEST:EMBED /MANIFESTINPUT:"$(ProjectDir)app.manifest"</AdditionalOptions>
     </Link>
     <Midl>
       <MkTypLibCompatible>false</MkTypLibCompatible>
@@ -186,9 +187,6 @@ if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(SolutionDir)third_party\webview2\build\native\include;$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
-    <Manifest>
-      <EnableDpiAwareness>true</EnableDpiAwareness>
-    </Manifest>
     <PostBuildEvent>
       <Message>copy bundled filters</Message>
       <Command>if not exist "$(OutDir)filters\x64" mkdir "$(OutDir)filters\x64"
@@ -208,10 +206,11 @@ if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\
       <AdditionalIncludeDirectories>$(SolutionDir)third_party\webview2\build\native\include;$(SolutionDir)\third_party\directshow-baseclasses\src\Samples\Win7Samples\multimedia\directshow\baseclasses;$(VcpkgRoot)\installed\$(BoostTriplet)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><AdditionalOptions>-Zm200 /OPT:NOICF %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
-      <AdditionalLibraryDirectories>$(SolutionDir)third_party\webview2\build\native\$(PlatformTarget);$(VcpkgRoot)\installed\$(BoostTriplet)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><AdditionalDependencies>WebView2LoaderStatic.lib;boost_thread-vc145-mt-x64-1_91.lib;boost_chrono-vc145-mt-x64-1_91.lib;boost_atomic-vc145-mt-x64-1_91.lib;boost_filesystem-vc145-mt-x64-1_91.lib;boost_date_time-vc145-mt-x64-1_91.lib;boost_iostreams-vc145-mt-x64-1_91.lib;boost_random-vc145-mt-x64-1_91.lib;boost_container-vc145-mt-x64-1_91.lib;zstd.lib;lzma.lib;bz2.lib;zs.lib;%(AdditionalDependencies)</AdditionalDependencies><SubSystem>Windows</SubSystem>
+                  <AdditionalLibraryDirectories>$(SolutionDir)third_party\webview2\build\native\$(PlatformTarget);$(VcpkgRoot)\installed\$(BoostTriplet)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><AdditionalDependencies>WebView2LoaderStatic.lib;boost_thread-vc145-mt-x64-1_91.lib;boost_chrono-vc145-mt-x64-1_91.lib;boost_atomic-vc145-mt-x64-1_91.lib;boost_filesystem-vc145-mt-x64-1_91.lib;boost_date_time-vc145-mt-x64-1_91.lib;boost_iostreams-vc145-mt-x64-1_91.lib;boost_random-vc145-mt-x64-1_91.lib;boost_container-vc145-mt-x64-1_91.lib;zstd.lib;lzma.lib;bz2.lib;zs.lib;%(AdditionalDependencies)</AdditionalDependencies><SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+    <AdditionalOptions>/MANIFEST:EMBED /MANIFESTINPUT:"$(ProjectDir)app.manifest"</AdditionalOptions>
     </Link>
     <Midl>
       <MkTypLibCompatible>false</MkTypLibCompatible>
@@ -230,7 +229,7 @@ if "$(Platform)"=="x64" ( xcopy /y /d "$(SolutionDir)third_party\filters\redist\
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <None Include="ReadMe.txt" />
+  	<None Include="ReadMe.txt" />
     <None Include="res\bitmap1.bmp" />
     <None Include="res\bitmap2.bmp" />
     <None Include="res\blank.bmp" />
