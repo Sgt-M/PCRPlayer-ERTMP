@@ -88,6 +88,84 @@ static HRESULT EnsureEmptyKey(HKEY root, LPCWSTR sub)
 	return HRESULT_FROM_WIN32(lr);
 }
 
+static BOOL FlagValue(LPCWSTR name, DWORD* out)
+{
+	HKEY hk = NULL; BOOL ok = FALSE;
+	if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\PCRPlayer", 0, KEY_READ, &hk) == ERROR_SUCCESS)
+	{
+		DWORD t = 0, cb = sizeof(DWORD);
+		if (::RegQueryValueExW(hk, name, NULL, &t, (BYTE*)out, &cb) == ERROR_SUCCESS && t == REG_DWORD)
+			ok = TRUE;
+		::RegCloseKey(hk);
+	}
+	return ok;
+}
+
+static void SetFlag(LPCWSTR name, DWORD v)
+{
+	HKEY hk = NULL;
+	if (::RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\PCRPlayer", 0, NULL,
+		REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hk, NULL) == ERROR_SUCCESS)
+	{
+		::RegSetValueExW(hk, name, 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+		::RegCloseKey(hk);
+	}
+}
+
+//[pcr-filter] user opt-out: after /unregister-filters we must NOT silently
+//re-register on the next launch (that would defeat installing official LAV/MPC VR).
+BOOL IsDisabled()
+{
+	DWORD v = 0; FlagValue(L"FiltersDisabled", &v);
+	return v == 1;
+}
+
+void Enable()
+{
+	SetFlag(L"FiltersDisabled", 0);
+}
+
+//[pcr-filter] remove our HKCU registrations (only entries whose InprocServer32
+//points into our own filters\ dir - third-party or machine-wide entries are
+//untouched) and keep them off. Returns number of removed CLSID trees.
+int UnregisterAll()
+{
+	int removed = 0;
+	for (size_t i = 0; i < _countof(g_tab); ++i)
+	{
+		const Entry& e = g_tab[i];
+		wchar_t sub[256];
+		wsprintfW(sub, L"Software\\Classes\\CLSID\\%s\\InprocServer32", e.clsid);
+		HKEY hk = NULL;
+		if (::RegOpenKeyExW(HKEY_CURRENT_USER, sub, 0, KEY_READ | REG_VIEW, &hk) == ERROR_SUCCESS)
+		{
+			wchar_t v[MAX_PATH]; DWORD cb = sizeof(v), t = 0;
+			BOOL mine = FALSE;
+			if (::RegQueryValueExW(hk, NULL, NULL, &t, (BYTE*)v, &cb) == ERROR_SUCCESS)
+			{
+				v[(cb / sizeof(wchar_t) < MAX_PATH) ? cb / sizeof(wchar_t) : MAX_PATH - 1] = 0;
+				mine = (wcsstr(v, L"\\filters\\x64\\") || wcsstr(v, L"\\filters\\x86\\")) != NULL;
+			}
+			::RegCloseKey(hk);
+			if (mine)
+			{
+				wsprintfW(sub, L"Software\\Classes\\CLSID\\%s", e.clsid);
+				if (::RegDeleteTreeW(HKEY_CURRENT_USER, sub) == ERROR_SUCCESS) { ++removed; }
+			}
+		}
+	}
+	// drop our stamp so a future re-enable re-registers cleanly
+	HKEY hk = NULL;
+	if (::RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\PCRPlayer", 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS)
+	{
+		::RegDeleteValueW(hk, L"FiltersStamp");
+		::RegCloseKey(hk);
+	}
+	SetFlag(L"FiltersDisabled", 1);
+	pcrweb::Log(L"pcrfilter: unregistered %d entries (FiltersDisabled=1)", removed);
+	return removed;
+}
+
 static void WriteStamp()
 {
 	HKEY hk = NULL;
@@ -104,6 +182,11 @@ void EnsureRegistered()
 {
 	//[pcr-video] run every launch (4 cheap reg checks): the stale-HKCU cleanup
 	// below must stay effective even when the stamp already matches.
+	if (IsDisabled())
+	{
+		pcrweb::Log(L"pcrfilter: disabled by user (FiltersDisabled=1), skip");
+		return;
+	}
 
 	wchar_t dir[MAX_PATH]; ::GetModuleFileNameW(NULL, dir, MAX_PATH);
 	wchar_t* slash = wcsrchr(dir, L'\\'); if (slash) { *slash = 0; }
@@ -178,6 +261,41 @@ void EnsureRegistered()
 	}
 	WriteStamp();
 	pcrweb::Log(L"pcrfilter: registered=%d skipped=%d stamp=%s", done, skip, FILTER_STAMP);
+}
+
+bool HandleUnregisterRequest()
+{
+	LPCWSTR cl = ::GetCommandLineW();
+	bool unreg = (cl && wcsstr(cl, L"/unregister-filters") != NULL);
+	bool reg   = (cl && wcsstr(cl, L"/register-filters")   != NULL);
+	if (!unreg && !reg) { return false; }
+
+	wchar_t msg[256];
+	if (unreg)
+	{
+		int n = UnregisterAll();
+		// "PCRPlayer that sets aside the bundled LAV Filters / MPC Video Renderer
+		//  registrations from HKCU %d items. Automatic registration will not be
+		//  performed thereafter. It will use the filters installed by the installer."
+		wsprintfW(msg,
+			L"\x540c\x6805\x306e LAV Filters / MPC Video Renderer \x306e"
+			L"HKCU \x767b\x9332\x3092 %d \x4ef6\x3001\x5916\x3057\x307e\x3057\x305f\x3002\n"
+			L"\x4eca\x5f8c\x3001\x81ea\x52d5\x767b\x9332\x306f\x884c\x308f\x308c\x307e\x305b\x3093\x3002"
+			L"\x30a4\x30f3\x30b9\x30c8\x30fc\x30e9\x3067\x30a4\x30f3\x30b9\x30c8\x30fc\x30eb\x3055\x308c\x305f"
+			L"\x30d5\x30a3\x30eb\x30bf\x304c\x4f7f\x308f\x308c\x307e\x3059\x3002", n);
+		::MessageBoxW(NULL, msg, L"PCRPlayer", MB_OK | MB_ICONINFORMATION);
+	}
+	else
+	{
+		Enable();
+		EnsureRegistered();
+		// "Restored automatic registration and re-registered the bundled filters."
+		::MessageBoxW(NULL,
+			L"\x81ea\x52d5\x767b\x9332\x3092\x6709\x52b9\x306b\x623b\x3057\x3001"
+			L"\x540c\x6805\x30d5\x30a3\x30eb\x30bf\x3092\x518d\x767b\x9332\x3057\x307e\x3057\x305f\x3002",
+			L"PCRPlayer", MB_OK | MB_ICONINFORMATION);
+	}
+	return true;
 }
 
 } // namespace pcrfilters

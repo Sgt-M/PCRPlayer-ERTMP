@@ -7,6 +7,16 @@ namespace pcrfilters
 	// HKCU\Software\Classes\CLSID so the classic DShow device enumerator
 	// (and therefore the existing decoder-selection UI) can see them.
 	// No admin rights needed; never touches filters already registered
-	// machine-wide. Idempotent + version-stamped.
+	// machine-wide. Idempotent + version-stamped.  Skipped entirely when the
+	// user opted out via /unregister-filters (see below).
 	void EnsureRegistered();
+
+	//[pcr-filter] maintenance CLI. If the command line contains
+	//  /unregister-filters : drop every bundled filter registration we made
+	//                        in HKCU and stay off (so a separately installed
+	//                        LAV / MPC Video Renderer is used instead).
+	//  /register-filters   : turn auto-registration back on and re-register.
+	// Shows a result dialog and returns true when handled (caller should then
+	// exit without opening the main window). Returns false for a normal launch.
+	bool HandleUnregisterRequest();
 }
