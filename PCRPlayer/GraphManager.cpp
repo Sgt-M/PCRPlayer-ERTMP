@@ -15,6 +15,12 @@ namespace dsp {
 //LAV docs: call before the filter is connected.
 static bool lavRequestD3D11(IBaseFilter* f)
 {
+	//[pcr-vsr] override: set HKCU\Software\PCRPlayer "ForceD3D11ForVSR" (DWORD) = 0
+	//to keep LAV's own hwaccel choice (e.g. DXVA2 copy back) untouched.
+	DWORD v = 1, sz = sizeof(v);
+	if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\PCRPlayer", L"ForceD3D11ForVSR",
+	                 RRF_RT_REG_DWORD, NULL, &v, &sz) == ERROR_SUCCESS && v == 0)
+		return false;
 	CComPtr<ILAVVideoSettings> s;
 	if (f == NULL || FAILED(f->QueryInterface(__uuidof(ILAVVideoSettings), (void**)&s)) || !s)
 		return false;
