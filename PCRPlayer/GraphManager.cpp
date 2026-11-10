@@ -27,7 +27,13 @@ static bool lavRequestD3D11(IBaseFilter* f)
 	if (SUCCEEDED(s->SetRuntimeConfig(TRUE)) && s->CheckHWAccelSupport(HWAccel_D3D11) > 0)
 	{
 		s->SetHWAccel(HWAccel_D3D11);
-		return s->GetHWAccel() == HWAccel_D3D11;
+		const bool ok = (s->GetHWAccel() == HWAccel_D3D11);
+		//[pcr-fix] runtime mode also disables persistence for the user's own
+		//dialog OK (LAV skips SaveSettings while the flag is set) - return the
+		//instance to registry mode. Our D3D11 value was never saved (no
+		//SaveSettings call), so the user's global LAV settings stay untouched.
+		s->SetRuntimeConfig(FALSE);
+		return ok;
 	}
 	return false;
 }
