@@ -385,7 +385,7 @@ LR"JS(
       if (b) { sh = Math.max(sh, b.scrollHeight); }
       return JSON.stringify({ top: top, sh: sh, ch: ch, dpr: window.devicePixelRatio || 1 });
     },
-    scrollTo: function (y) { p._prog = true; window.scrollTo(0, y); return 'ok'; },
+    scrollTo: function (y, smooth) { p._prog = true; window.scrollTo({ left: 0, top: y, behavior: smooth ? 'smooth' : 'auto' }); return 'ok'; },
     scrollBy: function (y) { p._prog = true; window.scrollBy(0, y); return 'ok'; },
 
     scale: function () { // physical/logical factor (dpr * zoom)
@@ -436,7 +436,7 @@ LR"JS(
       return p.infoOf(a || el);
     },
     anchor: function (id) { return p.infoOf(document.getElementById(id)); },
-    scrollIntoView: function (id) { var el = document.getElementById(id); if (!el) { return 'err'; } el.scrollIntoView(true); return 'ok'; },
+    scrollIntoView: function (id, smooth) { var el = document.getElementById(id); if (!el) { return 'err'; } el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); return 'ok'; },
 
     selectText: function () { var s = getSelection(); return s ? s.toString() : ''; },
     selectAll: function () {
@@ -495,7 +495,7 @@ LR"JS(
       var r = p._ranges[i];
       var s = getSelection(); s.removeAllRanges(); s.addRange(r);
       var rect = r.getBoundingClientRect();
-      window.scrollTo(0, window.scrollY + rect.top - 30);
+      window.scrollTo({ left: 0, top: window.scrollY + rect.top - 30, behavior: 'smooth' });
       return String(i);
     },
     nav: function (term, dir) {

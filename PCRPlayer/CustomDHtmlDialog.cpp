@@ -692,15 +692,18 @@ BOOL CCustomDHtmlDialog::RestoreScroll()
 	custom_.scroll = true;
 	if (custom_.scrollHeight - custom_.clientHeight - custom_.scrollTop <= 0)
 	{
-		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L")");
+		//[pcr-web] smooth = IE-era behavior (IE animated window.scroll; the new-
+		//res reveal relied on that). Timer auto-scroll (ScrollToBottomBy) stays
+		//instant, its per-tick delta already is the step animation.
+		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L", 1)");
 	}
-	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)custom_.scrollTop) + L")");
+	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)custom_.scrollTop) + L", 1)");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToTop()
 {
 	custom_.scroll = true;
-	return EvalBoolOk(L"pcr.scrollTo(0)");
+	return EvalBoolOk(L"pcr.scrollTo(0, 1)");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToBottom()
@@ -708,7 +711,7 @@ BOOL CCustomDHtmlDialog::ScrollToBottom()
 	long top = 0, sh = 0, ch = 0;
 	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
 	custom_.scroll = true;
-	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L")");
+	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L", 1)");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToBottomBy(long y)
@@ -819,7 +822,8 @@ BOOL CCustomDHtmlDialog::GetElementById(const std::wstring& id, PcrElement& el)
 
 BOOL CCustomDHtmlDialog::ScrollIntoViewId(const std::wstring& id)
 {
-	return EvalBoolOk(L"pcr.scrollIntoView(\"" + pcrweb::JsEscape(id) + L"\")");
+	//[pcr-web] smooth: IE animated scrollIntoView (res anchor jumps)
+	return EvalBoolOk(L"pcr.scrollIntoView(\"" + pcrweb::JsEscape(id) + L"\", 1)");
 }
 
 BOOL CCustomDHtmlDialog::IsTextArea(const CPoint& screen)
