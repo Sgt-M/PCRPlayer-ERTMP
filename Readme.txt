@@ -38,3 +38,16 @@ MPC Video Renderer		https://github.com/Aleksoid1978/VideoRenderer	GPL3.0
 および
 LAV Filters				https://github.com/Nevcairiel/LAVFilters		GPL2.0
 のバイナリが含まれています。
+
+■ リリースzip同梱ファイルの説明
+
+	RegisterFilters.bat      同梱LAV/MPC VRのHKCU登録を再有効化（ダブルクリック）
+	UnregisterFilters.bat    同梱LAV/MPC VRのHKCU登録を解除し自動登録を無効化。
+	                         別途LAV FiltersやMPC VRをインストーラで導入する場合に実行。
+	VSR_*.reg                NVIDIA RTX VSR連動の切り替え（D3D11 copy back強制の
+	                         オン/オフ）。インポート後にプレイヤーを再起動。
+	PcrDiag64.exe / PcrDiag.exe
+	                         フィルタが認識されないとき実行すると、同じフォルダに
+	                         PcrDiag.txt が生成されます（不具合報告時に添付してください）。
+
+※ WebView2 (Edge) ランタイムが必要です。ローダは静的リンクのためDLLの同梱は不要です。
