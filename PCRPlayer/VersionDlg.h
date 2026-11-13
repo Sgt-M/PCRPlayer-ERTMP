@@ -23,5 +23,7 @@ public:
 	virtual BOOL OnInitDialog();
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
 	afx_msg void OnNMClickLinkUrl(NMHDR *pNMHDR, LRESULT *pResult);
+	afx_msg void OnNMClickLinkUrl2(NMHDR *pNMHDR, LRESULT *pResult);
 	CLinkCtrl m_xcLinkUrl;
+	CLinkCtrl m_xcLinkUrl2;
 };
