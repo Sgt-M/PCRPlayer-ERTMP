@@ -386,11 +386,17 @@ LR"JS(
     append: function (html) { var b = document.body; if (!b) { return 'err'; } b.insertAdjacentHTML('beforeend', html); return 'ok'; },
 
     scroll: function () {
+      //[pcr-fix] viewport metrics, NOT element metrics: the BBS skin may stretch
+      //html/body to its content height (custom skins do), which inflates
+      //documentElement.clientHeight to == scrollHeight, making "sh - ch" (the
+      //max scroll offset) always 0 - every bottom-jump then looked like a jump
+      //to the top. IE read the window viewport, so it never saw this.
       var de = document.documentElement, b = document.body;
-      var top = de ? de.scrollTop : 0, sh = de ? de.scrollHeight : 0, ch = de ? de.clientHeight : 0;
-      if (top === 0 && ch === 0 && b) { top = b.scrollTop; sh = b.scrollHeight; ch = b.clientHeight; }
-      if (b) { sh = Math.max(sh, b.scrollHeight); }
-      return JSON.stringify({ top: top, sh: sh, ch: ch, dpr: window.devicePixelRatio || 1 });
+      var ih = window.innerHeight || (de ? de.clientHeight : 0);
+      var top = (typeof window.scrollY === 'number') ? window.scrollY
+              : (de ? de.scrollTop : 0) || (b ? b.scrollTop : 0);
+      var sh = Math.max(de ? de.scrollHeight : 0, b ? b.scrollHeight : 0, ih);
+      return JSON.stringify({ top: top, sh: sh, ch: ih, dpr: window.devicePixelRatio || 1 });
     },
     scrollTo: function (y, smooth) { if (smooth) { p.hold(); } else { p._prog = true; } window.scrollTo({ left: 0, top: y, behavior: smooth ? 'smooth' : 'auto' }); return 'ok'; },
     scrollBy: function (y) { p._prog = true; window.scrollBy(0, y); return 'ok'; },
