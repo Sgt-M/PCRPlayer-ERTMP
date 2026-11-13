@@ -1,18 +1,13 @@
-PeerCastStationが9.0.0.0にてEnhanced RTMP配信に対応下ので、既存のPCRPlayerをEnhanced RTMP (今のところv1)に対応させたものです。
+PeerCastStationが9.0.0.0にてEnhanced RTMP配信に対応したので、既存のPCRPlayerをEnhanced RTMP (今のところv1)に対応させたものです。
 HEVCとAV1の映像を想定しています。
 ついでにBBS表示周りがIEコンポーネントを使っていたので、Webview2に変更しました。
+ビデオレンダラーのMPC Video Rendererに対応しました。設定の詳細設定→デコーダ→ビデオレンダラで従来通りのEVRとどちらかを選べます。（個人的にRTX VSR使いたくてMPC VRに対応させただけ。分かる人だけ使えばいいと思う。)
+デコーダーはLAV Filtersを使うことを推奨します。設定の詳細設定→デコーダ→優先して使用するビデオデコーダの欄で「LAV Video Decoder」を追加してください。オーディオデコーダは好きにして。
+PCRPlayer起動時にMPC VRやLAV Filtersがインストールされていない場合に同梱されているものをDSFilterとして登録して利用できるようにします。別にインストールしてある場合はそちらを使います。
 
 
 
-
-
-
-
-
-
-
-
-Visual Studio Community 2026 / Visual C++ 2015 で開発しています
+Visual Studio Community 2026 / Visual C++ 2015 で開発しています ※ほぼAI丸投げ
 
 ビルドには標準ライブラリとWindowsSDKの他に
 	DirectX SDK (June 2010)
