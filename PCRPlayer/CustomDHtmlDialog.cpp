@@ -521,6 +521,15 @@ void CCustomDHtmlDialog::UpdateBounds()
 	if (!controller_) { return; }
 	CRect rc;
 	GetClientRect(&rc);
+	//[pcr-web-fix] put_Bounds resizes only the WebView2 visual; the PCRWEB_CTR
+	// container kept its CREATION size forever and the Chrome child window is
+	// clipped to the container's client area — window resizes left everything
+	// beyond the original rect blank/misaligned (IE's widget window was moved by
+	// the layout itself, so this never showed). Move the container too.
+	HWND parent = NULL;
+	if (SUCCEEDED(controller_->get_ParentWindow(&parent)) && parent && ::IsWindow(parent)) {
+		::MoveWindow(parent, rc.left, rc.top, rc.Width(), rc.Height(), FALSE);
+	}
 	ICoreWebView2Controller* ctl = controller_;
 	CallWeb([ctl, rc]() {
 		if (!ctl) { return; }
