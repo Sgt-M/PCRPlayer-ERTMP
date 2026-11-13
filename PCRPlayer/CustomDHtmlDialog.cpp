@@ -716,9 +716,6 @@ BOOL CCustomDHtmlDialog::RestoreScroll(BOOL smooth)
 	long top = 0, sh = 0, ch = 0;
 	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
 	custom_.scroll = true;
-	pcrweb::Log(L"RESTORE hwnd=%p smooth=%d saved(sh=%d ch=%d top=%d) live(top=%d sh=%d ch=%d)",
-		(void*)GetSafeHwnd(), (int)smooth, (int)custom_.scrollHeight, (int)custom_.clientHeight, (int)custom_.scrollTop,
-		(int)top, (int)sh, (int)ch);
 	//[pcr-web] "was at bottom" -> stepped reveal to the (possibly grown) bottom
 	//like IE's animated window.scroll; otherwise snap back to the saved
 	//position (a document swap must not animate). Resize restores pass
@@ -744,7 +741,6 @@ BOOL CCustomDHtmlDialog::ScrollToBottom()
 	long top = 0, sh = 0, ch = 0;
 	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
 	custom_.scroll = true;
-	pcrweb::Log(L"BOTTOM requested (top=%d sh=%d ch=%d)", (int)top, (int)sh, (int)ch);
 	if (SmoothScrollTo(-1)) { return TRUE; }
 	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L", 0)");
 }
@@ -753,10 +749,9 @@ BOOL CCustomDHtmlDialog::ScrollToBottom()
 //works with zero compositor frames. y<0 = keep chasing the live bottom.
 BOOL CCustomDHtmlDialog::SmoothScrollTo(long y)
 {
-	if (!IsWebReady()) { pcrweb::Log(L"SMOOTH skip: not ready (y=%d)", (int)y); return FALSE; }
+	if (!IsWebReady()) { return FALSE; }
 	long top = 0, sh = 0, ch = 0;
-	if (!GetScrollParam(top, sh, ch)) { pcrweb::Log(L"SMOOTH skip: no param (y=%d)", (int)y); return FALSE; }
-	pcrweb::Log(L"SMOOTH to=%d live(top=%d sh=%d ch=%d)", (int)y, (int)top, (int)sh, (int)ch);
+	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
 	if (y >= 0 && y > sh - ch) { y = sh - ch; }
 	if (y < 0) { y = sh - ch; }
 	if (labs(y - top) <= 1)

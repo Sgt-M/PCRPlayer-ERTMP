@@ -223,7 +223,6 @@ void CBrowserDlg::OnCallbackDat()
 	std::vector<bbs::ResInfo> dat;
 	bool init = true;
 	if (!gl_.bbs.getDat(dat, init)) { return; }
-	pcrweb::Log(L"CBDAT enter hwnd=%p init=%d size=%d pos=%d scroll=%d", (void*)GetSafeHwnd(), (int)init, (int)dat.size(), (int)this_.pos, (int)this_.scroll);
 
 	if (init)
 	{// new load
@@ -275,7 +274,6 @@ void CBrowserDlg::OnCallbackDat()
 		//(scroll.latest=true in the config was dead here even in the IE build -
 		//IE-era reveals rode the reload cycles instead).
 		this_.newres = (this_.pos > 0 && dat.size() > this_.pos);
-		pcrweb::Log(L"CBDAT incr pos=%d size=%d newres=%d", (int)this_.pos, (int)dat.size(), (int)this_.newres);
 
 		createRes();
 
