@@ -372,8 +372,15 @@ LR"JS(
   if (window.pcr) { return; }
   var p = {
     _prog: false, _ranges: [], _term: '', _last: null,
+    _hold: false, _hdt: 0,
 
     send: function (o) { try { chrome.webview.postMessage(JSON.stringify(o)); } catch (e) { } },
+
+    //[pcr-web] a smooth scroll fires MANY scroll events; hold the programmatic
+    //flag until the animation ends (scrollend, or 1.2s safety timeout) so the
+    //mid-animation events are not misread as user scrolls (that stopped the
+    //follow-new-res auto-scroll timer).
+    hold: function () { p._prog = true; p._hold = true; clearTimeout(p._hdt); p._hdt = setTimeout(function () { p._hold = false; p._prog = false; }, 1200); },
 
     open: function (html) { try { document.open(); document.write(html); document.close(); return 'ok'; } catch (e) { return 'err'; } },
     append: function (html) { var b = document.body; if (!b) { return 'err'; } b.insertAdjacentHTML('beforeend', html); return 'ok'; },
@@ -385,7 +392,7 @@ LR"JS(
       if (b) { sh = Math.max(sh, b.scrollHeight); }
       return JSON.stringify({ top: top, sh: sh, ch: ch, dpr: window.devicePixelRatio || 1 });
     },
-    scrollTo: function (y, smooth) { p._prog = true; window.scrollTo({ left: 0, top: y, behavior: smooth ? 'smooth' : 'auto' }); return 'ok'; },
+    scrollTo: function (y, smooth) { if (smooth) { p.hold(); } else { p._prog = true; } window.scrollTo({ left: 0, top: y, behavior: smooth ? 'smooth' : 'auto' }); return 'ok'; },
     scrollBy: function (y) { p._prog = true; window.scrollBy(0, y); return 'ok'; },
 
     scale: function () { // physical/logical factor (dpr * zoom)
@@ -436,7 +443,7 @@ LR"JS(
       return p.infoOf(a || el);
     },
     anchor: function (id) { return p.infoOf(document.getElementById(id)); },
-    scrollIntoView: function (id, smooth) { var el = document.getElementById(id); if (!el) { return 'err'; } el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); return 'ok'; },
+    scrollIntoView: function (id, smooth) { var el = document.getElementById(id); if (!el) { return 'err'; } if (smooth) { p.hold(); } else { p._prog = true; } el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); return 'ok'; },
 
     selectText: function () { var s = getSelection(); return s ? s.toString() : ''; },
     selectAll: function () {
@@ -495,6 +502,7 @@ LR"JS(
       var r = p._ranges[i];
       var s = getSelection(); s.removeAllRanges(); s.addRange(r);
       var rect = r.getBoundingClientRect();
+      p.hold();
       window.scrollTo({ left: 0, top: window.scrollY + rect.top - 30, behavior: 'smooth' });
       return String(i);
     },
@@ -584,7 +592,10 @@ LR"JS(
 
   window.addEventListener('scroll', function () {
     p.send({ e: 'scroll', prog: p._prog ? 1 : 0 });
-    p._prog = false;
+    if (!p._hold) { p._prog = false; }
+  }, { passive: true });
+  window.addEventListener('scrollend', function () {
+    if (p._hold) { p._hold = false; clearTimeout(p._hdt); p._prog = false; }
   }, { passive: true });
 
   window.pcr = p;
