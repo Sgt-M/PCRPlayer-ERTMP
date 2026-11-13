@@ -188,7 +188,7 @@ void CBrowserDlg::OnSize(UINT nType, int cx, int cy)
 	if (StoreScroll())
 	{
 		CCustomDHtmlDialog::OnSize(nType, cx, cy);
-		RestoreScroll();
+		RestoreScroll(FALSE);
 		return;
 	}
 
@@ -261,6 +261,13 @@ void CBrowserDlg::OnCallbackDat()
 	}
 	else
 	{// load remaining posts
+		//[pcr-web] capture the position BEFORE the append. createRes() ends in
+		//RestoreScroll(), which decides "follow to bottom" from custom_; with a
+		//smooth restore it used to save the mid-animation position afterwards,
+		//which permanently pinned RestoreScroll to the "restore top" branch and
+		//new posts stopped scrolling. IE was instant, so the order never showed.
+		StoreScroll();
+
 		createRes();
 
 		StoreScroll();

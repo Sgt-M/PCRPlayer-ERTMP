@@ -685,19 +685,21 @@ BOOL CCustomDHtmlDialog::StoreScroll()
 	return GetScrollParam(custom_.scrollTop, custom_.scrollHeight, custom_.clientHeight);
 }
 
-BOOL CCustomDHtmlDialog::RestoreScroll()
+BOOL CCustomDHtmlDialog::RestoreScroll(BOOL smooth)
 {
 	long top = 0, sh = 0, ch = 0;
 	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
 	custom_.scroll = true;
+	//[pcr-web] smooth = IE-era behavior (IE animated window.scroll; the new-
+	//res reveal relied on that). Timer auto-scroll (ScrollToBottomBy) stays
+	//instant, its per-tick delta already is the step animation. Resize
+	//restores pass smooth=FALSE (animation during window drag looks broken).
+	LPCWSTR sw = smooth ? L", 1" : L", 0";
 	if (custom_.scrollHeight - custom_.clientHeight - custom_.scrollTop <= 0)
 	{
-		//[pcr-web] smooth = IE-era behavior (IE animated window.scroll; the new-
-		//res reveal relied on that). Timer auto-scroll (ScrollToBottomBy) stays
-		//instant, its per-tick delta already is the step animation.
-		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L", 1)");
+		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + sw);
 	}
-	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)custom_.scrollTop) + L", 1)");
+	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)custom_.scrollTop) + sw);
 }
 
 BOOL CCustomDHtmlDialog::ScrollToTop()

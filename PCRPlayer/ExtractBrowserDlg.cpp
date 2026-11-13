@@ -499,7 +499,7 @@ void CExtractBrowserDlg::OnSize(UINT nType, int cx, int cy)
 	if (StoreScroll())
 	{
 		CCustomDHtmlDialog::OnSize(nType, cx, cy);
-		RestoreScroll();
+		RestoreScroll(FALSE);
 		return;
 	}
 	CCustomDHtmlDialog::OnSize(nType, cx, cy);

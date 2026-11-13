@@ -88,7 +88,7 @@ public:
 
 	// scroll
 	BOOL StoreScroll();
-	BOOL RestoreScroll();
+	BOOL RestoreScroll(BOOL smooth = TRUE);
 	BOOL ScrollToTop();
 	BOOL ScrollToBottom();
 	BOOL ScrollToBottomBy(long y);
