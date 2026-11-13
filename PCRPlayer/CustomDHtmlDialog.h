@@ -93,6 +93,8 @@ public:
 	BOOL ScrollToBottom();
 	BOOL ScrollToBottomBy(long y);
 	BOOL GetScrollParam(long& scrollTop, long& scrollHeight, long& clientHeight);
+	BOOL SmoothScrollTo(long y);   // stepped reveal; y<0 = chase live bottom
+	void KillSmoothScroll();
 
 	// dom helpers
 	BOOL RemoveClassName(const std::wstring& search);
@@ -103,6 +105,10 @@ public:
 	BOOL GetElementAt(const CPoint& screen, PcrElement& el);            // elementFromPoint
 	BOOL GetElementById(const std::wstring& id, PcrElement& el);
 	BOOL ScrollIntoViewId(const std::wstring& id);
+
+	//[pcr-web] stepped reveal state (PCR_TIMER_SMOOTH)
+	long smoothTarget_;
+	bool smoothActive_;
 	BOOL IsTextArea(const CPoint& screen);
 
 	// selection / clipboard

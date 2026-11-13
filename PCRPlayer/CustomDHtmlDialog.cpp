@@ -17,6 +17,11 @@ IMPLEMENT_DYNCREATE(CCustomDHtmlDialog, CDialog)
 
 #define PCR_TIMER_ENV (0x50c1)
 #define PCR_TIMER_KICK 0xA7C3
+//[pcr-web] Win32-timer stepped reveal (Chromium behavior:'smooth' is
+//compositor-driven and FREEZES while the browser pane is hidden/covered -
+//new-res reveals silently stalled; BBS pane hides when offline). The IE-era
+//animated scroll was OS-timer based, so step the scroll ourselves.
+#define PCR_TIMER_SMOOTH 0x5A0C
 
 static double ElementScale(const PcrElement& el, double zoom)
 {
@@ -34,6 +39,8 @@ CCustomDHtmlDialog::CCustomDHtmlDialog()
 	, creating_(false)
 	, navAllow_(0)
 	, scale_(1.0)
+	, smoothTarget_(0)
+	, smoothActive_(false)
 {
 	::memset(&tokNavStart_, 0, sizeof(tokNavStart_));
 	::memset(&tokNavDone_, 0, sizeof(tokNavDone_));
@@ -53,6 +60,8 @@ CCustomDHtmlDialog::CCustomDHtmlDialog(UINT nIDTemplate, CWnd* pParent /*=NULL*/
 	, creating_(false)
 	, navAllow_(0)
 	, scale_(1.0)
+	, smoothTarget_(0)
+	, smoothActive_(false)
 {
 	::memset(&tokNavStart_, 0, sizeof(tokNavStart_));
 	::memset(&tokNavDone_, 0, sizeof(tokNavDone_));
@@ -141,6 +150,21 @@ void CCustomDHtmlDialog::OnTimer(UINT_PTR nIDEvent)
 		if (!::IsWindow(GetSafeHwnd())) { return; }
 		::KillTimer(GetSafeHwnd(), PCR_TIMER_KICK);
 		StartCreate();
+		return;
+	}
+
+	if (nIDEvent == PCR_TIMER_SMOOTH)
+	{
+		if (!smoothActive_) { ::KillTimer(GetSafeHwnd(), PCR_TIMER_SMOOTH); return; }
+		long top = 0, sh = 0, ch = 0;
+		if (!GetScrollParam(top, sh, ch)) { KillSmoothScroll(); return; }
+		if (smoothTarget_ < 0) { smoothTarget_ = sh - ch; } // follow live bottom
+		long rem = smoothTarget_ - top;
+		if (rem == 0) { KillSmoothScroll(); return; }
+		long step = rem / 6;
+		if (step == 0) { step = (rem > 0) ? 1 : -1; }
+		if (!EvalBoolOk(L"pcr.scrollBy(" + std::to_wstring((long long)step) + L")"))
+		{ KillSmoothScroll(); return; }
 		return;
 	}
 
@@ -421,6 +445,7 @@ void CCustomDHtmlDialog::DispatchWebMessage(const std::wstring& json)
 	if (e == L"scroll") {
 		double prog = 0;
 		pcrweb::JsonGetNum(body, L"prog", prog);
+		if (prog == 0) { KillSmoothScroll(); } // user grabbed the page (IE-era behavior)
 		OnBrowserScroll(prog != 0);
 		return;
 	}
@@ -648,6 +673,7 @@ std::wstring CCustomDHtmlDialog::EvalString(const std::wstring& js, DWORD timeou
 
 BOOL CCustomDHtmlDialog::LoadFromString(const std::wstring& html)
 {
+	KillSmoothScroll(); // document swap kills any running reveal
 	std::wstring js = L"pcr.open(\"" + pcrweb::JsEscape(html) + L"\")";
 	pcrweb::Log(L"open eval %d chars", (int)html.size());
 	if (!EvalBoolOk(js)) { return FALSE; }
@@ -690,22 +716,24 @@ BOOL CCustomDHtmlDialog::RestoreScroll(BOOL smooth)
 	long top = 0, sh = 0, ch = 0;
 	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
 	custom_.scroll = true;
-	//[pcr-web] smooth = IE-era behavior (IE animated window.scroll; the new-
-	//res reveal relied on that). Timer auto-scroll (ScrollToBottomBy) stays
-	//instant, its per-tick delta already is the step animation. Resize
-	//restores pass smooth=FALSE (animation during window drag looks broken).
-	LPCWSTR sw = smooth ? L", 1" : L", 0";
+	//[pcr-web] "was at bottom" -> stepped reveal to the (possibly grown) bottom
+	//like IE's animated window.scroll; otherwise snap back to the saved
+	//position (a document swap must not animate). Resize restores pass
+	//smooth=FALSE.
 	if (custom_.scrollHeight - custom_.clientHeight - custom_.scrollTop <= 0)
 	{
-		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + sw);
+		if (smooth) { return SmoothScrollTo(-1); } // -1 = live bottom
+		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L", 0)");
 	}
-	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)custom_.scrollTop) + sw);
+	KillSmoothScroll();
+	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)custom_.scrollTop) + L", 0)");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToTop()
 {
 	custom_.scroll = true;
-	return EvalBoolOk(L"pcr.scrollTo(0, 1)");
+	if (SmoothScrollTo(0)) { return TRUE; }
+	return EvalBoolOk(L"pcr.scrollTo(0, 0)");
 }
 
 BOOL CCustomDHtmlDialog::ScrollToBottom()
@@ -713,7 +741,34 @@ BOOL CCustomDHtmlDialog::ScrollToBottom()
 	long top = 0, sh = 0, ch = 0;
 	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
 	custom_.scroll = true;
-	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L", 1)");
+	if (SmoothScrollTo(-1)) { return TRUE; }
+	return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)sh) + L", 0)");
+}
+
+//[pcr-web] stepped reveal: 10ms Win32 timer, ease-out step (rem/6, min 1px),
+//works with zero compositor frames. y<0 = keep chasing the live bottom.
+BOOL CCustomDHtmlDialog::SmoothScrollTo(long y)
+{
+	if (!IsWebReady()) { return FALSE; }
+	long top = 0, sh = 0, ch = 0;
+	if (!GetScrollParam(top, sh, ch)) { return FALSE; }
+	if (y >= 0 && y > sh - ch) { y = sh - ch; }
+	if (y < 0) { y = sh - ch; }
+	if (labs(y - top) <= 1)
+	{
+		KillSmoothScroll();
+		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)y) + L", 0)");
+	}
+	smoothTarget_ = y;
+	smoothActive_ = true;
+	::SetTimer(GetSafeHwnd(), PCR_TIMER_SMOOTH, 10, NULL);
+	return TRUE;
+}
+
+void CCustomDHtmlDialog::KillSmoothScroll()
+{
+	smoothActive_ = false;
+	::KillTimer(GetSafeHwnd(), PCR_TIMER_SMOOTH);
 }
 
 BOOL CCustomDHtmlDialog::ScrollToBottomBy(long y)

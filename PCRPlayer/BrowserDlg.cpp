@@ -268,6 +268,13 @@ void CBrowserDlg::OnCallbackDat()
 		//new posts stopped scrolling. IE was instant, so the order never showed.
 		StoreScroll();
 
+		//[pcr-fix] the "new posts fetched" flag has to be captured BEFORE
+		//createRes() advances pos; after it, pos==dat.size() and the flag was
+		//always false, so autoScroll(latest) never resumed the follow crawl
+		//(scroll.latest=true in the config was dead here even in the IE build -
+		//IE-era reveals rode the reload cycles instead).
+		this_.newres = (this_.pos > 0 && dat.size() > this_.pos);
+
 		createRes();
 
 		StoreScroll();
@@ -300,7 +307,7 @@ void CBrowserDlg::OnCallbackDat()
 	}
 	else
 	{
-		autoScroll(latest);
+		autoScroll(this_.newres);
 		ChangeFocus();
 	}
 }
@@ -314,7 +321,8 @@ void CBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 			if (!createRes(gl_.value.detail.board.partial))
 			{
 				KillTimer(TIMER_ID_DAT);
-				autoScroll();
+				//[pcr-web] keep fetched-new-posts flag across chunked createRes
+				autoScroll(this_.newres);
 				ChangeFocus();
 			}
 			break;

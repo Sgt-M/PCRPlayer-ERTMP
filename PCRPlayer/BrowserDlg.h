@@ -52,6 +52,7 @@ protected:
 			, init(true)
 			, reset(false)
 			, scroll(false)
+			, newres(false)
 			, first(false)
 			, pos(0)
 			, time(0)
@@ -65,6 +66,7 @@ protected:
 		std::wstring url;//thread URL
 		bool reset;//reload same URL
 		bool scroll;//scrolling
+		bool newres;//new posts fetched this callback
 		bool first;//load >>1
 		size_t pos;//load position
 		DWORD time;
