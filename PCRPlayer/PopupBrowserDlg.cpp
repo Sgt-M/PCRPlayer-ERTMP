@@ -69,6 +69,12 @@ void CPopupBrowserDlg::onMouseMove()
 	CPoint pt;
 	if (GetCursorPos(&pt))
 	{
+		//[pcr-web] IE polling stopped when the mouse moved onto the popup itself,
+		//so it stayed open (text selectable/clickable). Reproduce: cursor over
+		//this popup or its webview child = keep.
+		CWnd* wnd = WindowFromPoint(pt);
+		if (wnd && ::GetAncestor(wnd->GetSafeHwnd(), GA_ROOT) == GetSafeHwnd()) { return; }
+
 		CRect rc(this_.target);
 		if (!this_.readOnly && this_.margin)
 		{
@@ -794,6 +800,14 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseClick(const PcrElement& el)
 	return S_OK;
 }
 
+
+HRESULT CPopupBrowserDlg::OnAnchorMouseOut(const PcrElement& el)
+{
+	el;	//[pcr-web] may be a bare out; cursor-based decision
+	//[pcr-web] nested popup hide (same rationale as CBrowserDlg)
+	if (popup_) { popup_->onMouseMove(); }
+	return S_OK;
+}
 
 HRESULT CPopupBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 {

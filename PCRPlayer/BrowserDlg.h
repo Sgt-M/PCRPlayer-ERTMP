@@ -96,5 +96,6 @@ public:
 	virtual HRESULT OnBrowserContext(DWORD menuID, POINT* pt, const PcrElement& el);
 	virtual HRESULT OnAnchorMouseClick(const PcrElement& el);
 	virtual HRESULT OnAnchorMouseOver(const PcrElement& el);
+	virtual HRESULT OnAnchorMouseOut(const PcrElement& el);
 	virtual void OnBrowserScroll(bool programmatic);
 };

@@ -613,6 +613,19 @@ LR"JS(
     } else if (p._last) {
       var out = { e: 'out', tag: p._last.tag, id: p._last.id, cls: p._last.cls, href: p._last.href, text: p._last.text, x: p._last.x, y: p._last.y, w: p._last.w, h: p._last.h, dpr: p._last.dpr };
       p._last = null; p.send(out);
+    } else {
+      //[pcr-fix] pointer on a non-anchor spot: IE polled hide on EVERY
+      //mousemove; send a bare out so the host re-evaluates (hides a stale
+      //popup when the cursor re-enters the page from the popup etc).
+      p.send({ e: 'out' });
+    }
+  }, true);
+
+  document.addEventListener('mouseout', function (e) {
+    if (e.relatedTarget) { return; } // pointer still inside the document
+    if (p._last) {
+      var l = p._last; p._last = null;
+      p.send({ e: 'out', tag: l.tag, id: l.id, cls: l.cls, href: l.href, text: l.text, x: l.x, y: l.y, w: l.w, h: l.h, dpr: l.dpr });
     }
   }, true);
 

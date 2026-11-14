@@ -484,11 +484,18 @@ void CCustomDHtmlDialog::DispatchWebMessage(const std::wstring& json)
 
 	PcrElement el;
 	ParseElement(body, el);
+	//[pcr-fix] 'out' may carry no element (pointer on a blank spot / back
+	//into the page from a popup): the host hide decision is cursor-based,
+	//IE polled it on every mousemove regardless of hover target.
+	if (e == L"out")
+	{
+		OnAnchorMouseOut(el);
+		return;
+	}
 	if (!el.valid()) { return; }
 
 	if (e == L"click")       { OnAnchorMouseClick(el); }
 	else if (e == L"over")   { OnAnchorMouseOver(el); }
-	else if (e == L"out")    { OnAnchorMouseOut(el); }
 }
 
 void CCustomDHtmlDialog::ParseElement(const std::wstring& json, PcrElement& el)

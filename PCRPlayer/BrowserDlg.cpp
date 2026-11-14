@@ -5,6 +5,7 @@
 #include "PCRPlayer.h"
 #include "BrowserDlg.h"
 #include "DHtmlUtl.h"
+#include "PcrWeb.h"
 
 enum TIMER_ID {
 	TIMER_ID_DAT,
@@ -398,6 +399,16 @@ HRESULT CBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 
 	popup_.popup(el, gl_.value.detail.popup);
 
+	return S_OK;
+}
+
+HRESULT CBrowserDlg::OnAnchorMouseOut(const PcrElement& el)
+{
+	el;	//[pcr-web] may be a bare out; hide decision is cursor-based
+	//[pcr-web] IE ran the hide polling (popup_.onMouseMove) from the dialog's
+	//WM_MOUSEMOVE; WebView2 child windows swallow mouse messages, so drive the
+	//identical cursor-based hide decision from the bridge 'out' event instead.
+	popup_.onMouseMove();
 	return S_OK;
 }
 

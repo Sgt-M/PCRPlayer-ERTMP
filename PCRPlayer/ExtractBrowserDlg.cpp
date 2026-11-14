@@ -412,13 +412,15 @@ HRESULT CExtractBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 
 HRESULT CExtractBrowserDlg::OnAnchorMouseOut(const PcrElement& el)
 {
-	if (!el.valid()) { return S_OK; }
+	el;	//[pcr-web] may be a bare out; cursor-based decision
 
 	if (this_.notify)
 	{
 		this_.notify = false;
 		setPaneText();
 	}
+	//[pcr-web] bridge 'out' drives the IE-era hide polling
+	popup_.onMouseMove();
 	return S_OK;
 }
 

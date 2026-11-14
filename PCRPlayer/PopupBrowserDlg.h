@@ -157,4 +157,5 @@ public:
 	virtual HRESULT OnBrowserContext(DWORD menuID, POINT* ppt, const PcrElement& el);
 	virtual HRESULT OnAnchorMouseClick(const PcrElement& el);
 	virtual HRESULT OnAnchorMouseOver(const PcrElement& el);
+	virtual HRESULT OnAnchorMouseOut(const PcrElement& el);
 };
