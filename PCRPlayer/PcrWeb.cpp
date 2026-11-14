@@ -573,6 +573,26 @@ LR"JS(
     return a ? a : null;
   }
 
+  //[pcr-fix] THE guard, final form. document.open() inside pcr.open() KEEPS the
+  // DOM document (expandos survive) and COPIES window globals, but DISCARDS all
+  // JS event listeners. So any window-based "already wired" state survives the
+  // swap and wrongly suppresses re-attach. Identity must be PER EXECUTION of this
+  // script: __pcrSeq rides the copied window counter, but MYID is bound fresh
+  // here; a re-eval (host OnDocMsg rewire) sees marker != MYID and re-attaches.
+  //[pcr-fix FINAL] document.open() (inside pcr.open()) swaps the DOM tree and
+  // DISCARDS this world's DOM event listeners with it, while realm globals AND
+  // document expandos survive (and other script worlds have DISJOINT window
+  // objects -- any window-/expando-based 'already wired' marker permanently
+  // suppresses re-attach). Trust only a realm-local identity: OUR handler set is
+  // live iff we saw the CURRENT documentElement when attaching; the watchdog
+  // below re-attaches <=600ms after any swap. Cross-world duplicates are
+  // collapsed host-side (CBrowserDlg 600ms same-anchor dedupe).
+  var lastRoot = null;
+  function wire() {
+  var root = document ? document.documentElement : null;
+  if (!root || root === lastRoot) { return; }
+  lastRoot = root;
+  try {
   document.addEventListener('click', function (e) {
     var a = elInfo(e.target);
     if (a) {
@@ -594,15 +614,19 @@ LR"JS(
       var out = { e: 'out', tag: p._last.tag, id: p._last.id, cls: p._last.cls, href: p._last.href, text: p._last.text, x: p._last.x, y: p._last.y, w: p._last.w, h: p._last.h, dpr: p._last.dpr };
       p._last = null; p.send(out);
     }
-  });
+  }, true);
 
-  window.addEventListener('scroll', function () {
+  document.addEventListener('scroll', function () {
     p.send({ e: 'scroll', prog: p._prog ? 1 : 0 });
     if (!p._hold) { p._prog = false; }
-  }, { passive: true });
-  window.addEventListener('scrollend', function () {
+  }, { passive: true, capture: true });
+  document.addEventListener('scrollend', function () {
     if (p._hold) { p._hold = false; clearTimeout(p._hdt); p._prog = false; }
   }, { passive: true });
+  } catch (x) { /* attach best-effort */ }
+  }
+  wire();
+  if (!window.__pcrWD) { window.__pcrWD = 1; setInterval(function () { try { wire(); } catch (x) { } }, 600); }
 
   window.pcr = p;
 })();

@@ -429,6 +429,9 @@ LRESULT CCustomDHtmlDialog::OnDocMsg(WPARAM, LPARAM)
 	std::wstring url = pendingUrl_;
 	pcrweb::Log(L"docmsg");
 	OnDocumentComplete(url);
+	//[pcr-fix] NOTE: re-wiring after pcr.open()'s document.open() is handled
+	// INSIDE the bridge (realm-local watchdog, PcrWeb.cpp) -- host-side re-eval
+	// lands in a script world with disjoint globals and cannot wire reliably.
 	return 0;
 }
 
@@ -686,6 +689,10 @@ BOOL CCustomDHtmlDialog::LoadFromString(const std::wstring& html)
 	std::wstring js = L"pcr.open(\"" + pcrweb::JsEscape(html) + L"\")";
 	pcrweb::Log(L"open eval %d chars", (int)html.size());
 	if (!EvalBoolOk(js)) { return FALSE; }
+	//[pcr-fix] the bridge re-evaluation runs on WM_PCR_DOC (OnDocMsg), NOT here:
+	// right after document.close() the parser is still finalizing and evaluating
+	// now binds to an intermediate document that gets discarded (hover/click
+	// listeners silently lost -- the WebView2-port regression).
 	pcrweb::Log(L"open eval done");
 	pendingUrl_ = L"about:blank";
 	::PostMessageW(GetSafeHwnd(), WM_PCR_DOC, 0, 0);

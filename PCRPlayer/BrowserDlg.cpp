@@ -380,6 +380,17 @@ HRESULT CBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 {
 	if (!el.valid()) { return S_OK; }
 
+	//[pcr-fix] the bridge is live in two script worlds (AddScript isolated +
+	// host main-world re-eval) -> duplicate events; collapse identical anchors.
+	{
+		static std::wstring s_last;
+		static ULONGLONG s_tick = 0;
+		ULONGLONG now = ::GetTickCount64();
+		std::wstring key = el.cls + L"|" + el.text.substr(0, 40);
+		if (key == s_last && now - s_tick < 600) { return S_OK; }
+		s_last = key; s_tick = now;
+	}
+
 	if (GetKeyState(VK_LBUTTON) & 0x8000 || GetKeyState(VK_RBUTTON) & 0x8000)
 	{
 		return S_OK;
