@@ -17,6 +17,7 @@
 enum TIMER_ID {
 	TIMER_ID_MOUSEHIDE,
 	TIMER_ID_SLEEPSTOP,
+	TIMER_ID_TICK,
 };
 
 typedef enum : int {
@@ -231,6 +232,7 @@ END_MESSAGE_MAP()
 BOOL CMainDlg::OnInitDialog()
 {
 	CDialog::OnInitDialog();
+	SetTimer(TIMER_ID_TICK, 500, NULL);	//[pcr-diag] sentry heartbeat (UI thread alive)
 
 	// このダイアログのアイコンを設定します。アプリケーションのメイン ウィンドウがダイアログでない場合、
 	//  Framework は、この設定を自動的に行います。
@@ -616,6 +618,8 @@ void CMainDlg::OnSize(UINT nType, int cx, int cy)
 
 void CMainDlg::OnClose()
 {
+	extern void pcrStopSentry();
+	pcrStopSentry();	//[pcr-diag] shutdown stalls timers by design; not a freeze
 	// BBSブラウザプロセス終了
 	if (gl_.value.detail.browser.close)
 	{
@@ -1100,6 +1104,9 @@ void CMainDlg::EndSleepStopTimer()
 
 void CMainDlg::OnTimer(UINT_PTR nIDEvent)
 {
+	extern void pcrUiBeat();
+	pcrUiBeat();	//[pcr-diag] freeze sentry heartbeat
+
 	switch (nIDEvent)
 	{
 	case TIMER_ID_MOUSEHIDE:

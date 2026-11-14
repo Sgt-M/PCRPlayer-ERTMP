@@ -111,7 +111,23 @@ HRESULT EnsureEnvironment()
 		WCHAR ebvar[MAX_PATH * 2] = {};
 		DWORD en = ::GetEnvironmentVariableW(L"PCR_WEBVIEW2_FOLDER", ebvar, MAX_PATH * 2);
 		if (en > 0 && en < MAX_PATH * 2) folder = ebvar;
-		else folder = gl_.current + L"webview2";
+		else
+		{
+			folder = gl_.current + L"webview2";
+			//[pcr-diag] opt-in per-process isolation: while several players share
+			//one UDF they share ONE msedgewebview2 browser process (the group
+			//outlives its creator - observed); closing a BBS-bearing instance may
+			//stall the others via that shared backend (user report, under
+			//investigation). PCR_WEBVIEW2_ISOLATE=1 gives each process its own
+			//<folder>\<pid> => no shared browser, no cross-instance coupling.
+			WCHAR iso[8] = {};
+			if (::GetEnvironmentVariableW(L"PCR_WEBVIEW2_ISOLATE", iso, 8) > 0 && iso[0] == L'1')
+			{
+				WCHAR tail[32];
+				wsprintfW(tail, L"\\%lu", ::GetCurrentProcessId());
+				folder += tail;
+			}
+		}
 		if (!folder.empty() && folder[1] != L':')
 		{
 			WCHAR full[MAX_PATH * 2] = {};

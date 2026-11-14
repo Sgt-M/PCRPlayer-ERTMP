@@ -41,8 +41,62 @@ CMainApp theApp;
 
 // CMainApp 初期化
 
+
+//[pcr-diag] freeze sentry: self minidump when the UI thread stops dispatching.
+//Background copies the UI heartbeat; if it goes stale >3s while other threads
+//still run (== classic message-loop stall), dump this process once per stall to
+//%TEMP%\pcrfreeze-<pid>-<tick>.dmp so the block site is readable offline.
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
+static volatile LONG s_pcrHeartbeat = 0;	// bumped by UI WM_TIMER
+static volatile LONG s_pcrDumpArmed = 1;
+static volatile LONG s_pcrStopped = 0;	// shutdown began: never dump again
+volatile LONG pcrUiHeartbeat() { return s_pcrHeartbeat; }
+void pcrUiBeat() { InterlockedIncrement(&s_pcrHeartbeat); }
+static void pcrWriteFreezeDump()
+{
+	s_pcrDumpArmed = 0;
+	wchar_t dir[MAX_PATH] = L"";
+	if (!::GetTempPathW(MAX_PATH, dir)) { return; }
+	SYSTEMTIME st; ::GetLocalTime(&st);
+	wchar_t name[MAX_PATH];
+	wsprintfW(name, L"pcrfreeze-%lu-%04d%02d%02d-%02d%02d%02d.dmp",
+		::GetCurrentProcessId(), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+	wchar_t path[MAX_PATH * 2];
+	wsprintfW(path, L"%s%s", dir, name);
+	HANDLE hFile = ::CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile != INVALID_HANDLE_VALUE)
+	{
+		MINIDUMP_TYPE type = (MINIDUMP_TYPE)(MiniDumpWithIndirectlyReferencedMemory |
+			MiniDumpWithThreadInfo | MiniDumpWithHandleData | MiniDumpWithUnloadedModules);
+		::MiniDumpWriteDump(::GetCurrentProcess(), ::GetCurrentProcessId(), hFile, type, NULL, NULL, NULL);
+		::CloseHandle(hFile);
+	}
+	//[pcr-diag] silent: no messagebox (also fires during normal shutdown; collect %TEMP%\pcrfreeze-*.dmp)
+}
+static DWORD WINAPI pcrSentryThread(LPVOID)
+{
+	LONG last = -1; ULONGLONG lastChange = ::GetTickCount64();
+	for (;;)
+	{
+		LONG now = s_pcrHeartbeat;
+		ULONGLONG tick = ::GetTickCount64();
+		if (now != last) { last = now; lastChange = tick; if (!s_pcrStopped) s_pcrDumpArmed = 1; }
+		else if (tick - lastChange > 3000 && s_pcrDumpArmed) { pcrWriteFreezeDump(); lastChange = tick; }
+		::Sleep(500);
+	}
+	return 0;
+}
+void pcrStopSentry() { s_pcrStopped = 1; s_pcrDumpArmed = 0; }
+void pcrStartSentry()
+{
+	HANDLE h = ::CreateThread(NULL, 0, pcrSentryThread, NULL, 0, NULL);
+	if (h) ::CloseHandle(h);
+}
+
 BOOL CMainApp::InitInstance()
 {
+	pcrStartSentry();
 	// アプリケーション マニフェストが visual スタイルを有効にするために、
 	// ComCtl32.dll Version 6 以降の使用を指定する場合は、
 	// Windows XP に InitCommonControlsEx() が必要です。さもなければ、ウィンドウ作成はすべて失敗します。
