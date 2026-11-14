@@ -6,6 +6,7 @@
 #include <crtdbg.h>
 
 namespace pcrweb {
+static std::wstring AcquireUdfSlot(const std::wstring& base);	// fwd (slot isolation)
 
 static CComPtr<ICoreWebView2Environment> s_env;
 static HRESULT s_envResult = E_PENDING;      // E_PENDING: not started / in progress
@@ -111,23 +112,7 @@ HRESULT EnsureEnvironment()
 		WCHAR ebvar[MAX_PATH * 2] = {};
 		DWORD en = ::GetEnvironmentVariableW(L"PCR_WEBVIEW2_FOLDER", ebvar, MAX_PATH * 2);
 		if (en > 0 && en < MAX_PATH * 2) folder = ebvar;
-		else
-		{
-			folder = gl_.current + L"webview2";
-			//[pcr-diag] opt-in per-process isolation: while several players share
-			//one UDF they share ONE msedgewebview2 browser process (the group
-			//outlives its creator - observed); closing a BBS-bearing instance may
-			//stall the others via that shared backend (user report, under
-			//investigation). PCR_WEBVIEW2_ISOLATE=1 gives each process its own
-			//<folder>\<pid> => no shared browser, no cross-instance coupling.
-			WCHAR iso[8] = {};
-			if (::GetEnvironmentVariableW(L"PCR_WEBVIEW2_ISOLATE", iso, 8) > 0 && iso[0] == L'1')
-			{
-				WCHAR tail[32];
-				wsprintfW(tail, L"\\%lu", ::GetCurrentProcessId());
-				folder += tail;
-			}
-		}
+		else folder = AcquireUdfSlot(gl_.current + L"webview2");
 		if (!folder.empty() && folder[1] != L':')
 		{
 			WCHAR full[MAX_PATH * 2] = {};
@@ -685,6 +670,42 @@ void PostWebTask(const std::function<void()>& fn)
 	if (s_taskEvt) { SetEvent(s_taskEvt); }
 }
 
+
+//[pcr-fix] per-process WebView2 isolation by DEFAULT: sharing one user-data
+//folder made every player share ONE msedgewebview2 browser backend; closing a
+//BBS-bearing instance stalled the other players for seconds (root cause
+//confirmed on user machine - isolated launches never freeze). Slots:
+//webview2, webview2.1, ... claimed by an exclusive lock file held for the
+//process lifetime, so slots abandoned by killed processes are reused and the
+//folders never proliferate. PCR_WEBVIEW2_SHARED=1 restores the old shared
+//behavior; an explicit PCR_WEBVIEW2_FOLDER always wins.
+static HANDLE s_slotLock = NULL;
+static std::wstring AcquireUdfSlot(const std::wstring& base)
+{
+	WCHAR sh[8] = {};
+	if (::GetEnvironmentVariableW(L"PCR_WEBVIEW2_SHARED", sh, 8) > 0 && sh[0] == L'1')
+		return base;
+	for (int i = 0; i < 64; ++i)
+	{
+		std::wstring cand = base;
+		if (i)
+		{
+			WCHAR tail[12];
+			wsprintfW(tail, L".%d", i);
+			cand += tail;
+		}
+		SHCreateDirectoryExW(NULL, cand.c_str(), NULL);
+		std::wstring lk = cand + L"\\lock";
+		HANDLE h = ::CreateFileW(lk.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+			OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, NULL);	// exclusive: share mode 0
+		if (h != INVALID_HANDLE_VALUE)
+		{
+			s_slotLock = h;	// held for process lifetime (never closed)
+			return cand;
+		}
+	}
+	return base;	// extreme fallback: all 64 slots busy -> share
+}
 
 void RequestEnvironment(const EnvReadyFn& onReady)
 {
