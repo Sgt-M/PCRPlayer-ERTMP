@@ -2,6 +2,7 @@
 //[pcr-web] WebView2 based implementation
 
 #include "stdafx.h"
+#include "PcrWeb.h"
 #include "PCRPlayer.h"
 #include "PopupBrowserDlg.h"
 #include "ExtractDlg.h"
@@ -423,6 +424,7 @@ void CPopupBrowserDlg::showWindow(bool show)
 			SetWindowPos(&wndTopMost, 0, 0, 0, 0, SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_NOOWNERZORDER|SWP_NOSENDCHANGING);
 			ShowWindow(SW_SHOWNA);
 			ChangeFocus();
+			NudgeWebVisible();	//[pcr-fix] child windows stay hidden otherwise
 		}
 	}
 	else

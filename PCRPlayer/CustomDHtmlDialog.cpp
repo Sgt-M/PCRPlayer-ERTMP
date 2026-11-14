@@ -542,6 +542,22 @@ void CCustomDHtmlDialog::UpdateBounds()
 	});
 }
 
+void CCustomDHtmlDialog::NudgeWebVisible()
+{
+	if (!controller_) { return; }
+	//[pcr-fix] hover popups are Created() hidden; the WebView2 runtime keeps the
+	//Chrome child windows hidden after such a host is first shown with
+	//SW_SHOWNA (visible frame, fully transparent content). Re-sync visibility:
+	//API toggle, then force-show the child if the runtime still holds it hidden.
+	ICoreWebView2Controller* ctl = controller_;
+	CallWeb([ctl]() { if (ctl) { ctl->put_IsVisible(FALSE); ctl->put_IsVisible(TRUE); } });
+	HWND child = GetSafeBrowserHwnd();
+	if (child && ::IsWindow(child) && ::IsWindowVisible(GetSafeHwnd()) && !::IsWindowVisible(child))
+	{
+		::ShowWindow(child, SW_SHOWNA);
+	}
+}
+
 void CCustomDHtmlDialog::OnSize(UINT nType, int cx, int cy)
 {
 	CDialog::OnSize(nType, cx, cy);
@@ -599,8 +615,26 @@ BOOL CCustomDHtmlDialog::PreTranslateMessage(MSG* pMsg)
 
 // ---------------------------------------------------------------- state / js
 
+HWND CCustomDHtmlDialog::ResolveWebChild()
+{
+	if (!::IsWindow(GetSafeHwnd())) { return NULL; }
+	//[pcr-fix] WebView2's child window (Chrome_WidgetWin_0) may not exist yet at
+	//the first NavigationCompleted (popups are created hidden/1x1 and sized
+	//later), which left webchild_ NULL forever: ClientToScreen no-ops (popup
+	//positioned at screen 0,0) and GetBrowserSize fails (calcWindowSize aborts
+	//-> SetWindowPos never runs -> blank unpositioned popup). Re-lookup lazily.
+	HWND ctr = ::FindWindowEx(GetSafeHwnd(), NULL, L"PCRWEB_CTR", NULL);
+	HWND scope = ctr ? ctr : GetSafeHwnd();
+	HWND child = ::FindWindowEx(scope, NULL, L"Chrome_WidgetWin_0", NULL);
+	if (!child) { child = ::FindWindowEx(scope, NULL, L"Chrome_WidgetWin_1", NULL); }
+	if (!child) { child = ::FindWindowEx(GetSafeHwnd(), NULL, L"Chrome_WidgetWin_0", NULL); }
+	if (child) { webchild_ = child; }
+	return webchild_;
+}
+
 HWND CCustomDHtmlDialog::GetSafeBrowserHwnd()
 {
+	if ((!webchild_ || !::IsWindow(webchild_)) && ready_) { ResolveWebChild(); }
 	return webchild_;
 }
 

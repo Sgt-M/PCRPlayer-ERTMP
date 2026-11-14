@@ -76,6 +76,7 @@ public:
 	// state
 	bool IsWebReady() const { return ready_; }
 	HWND GetSafeBrowserHwnd();                       // WebView2 child window
+	void NudgeWebVisible();                          // [pcr-fix] re-sync after SW_SHOWNA
 	BOOL GetBrowserSize(CSize& size);
 
 	// synchronous JS evaluation (pumps messages while waiting)
@@ -156,6 +157,7 @@ protected:
 	void StartCreate();
 	void CreateController();
 	void UpdateBounds();
+	HWND ResolveWebChild(); // [pcr-fix] lazy child-window lookup
 	void DispatchWebMessage(const std::wstring& json);
 	void ParseElement(const std::wstring& json, PcrElement& el);
 	BOOL EvalBoolOk(const std::wstring& js);
