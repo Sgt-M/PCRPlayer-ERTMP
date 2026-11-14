@@ -1,5 +1,8 @@
 #include "stdafx.h"
 
+extern void pcrTrace(const wchar_t*);
+
+
 namespace dsp {
 
 DSPlayer::DSPlayer(utl::SyncLog& log)
@@ -18,6 +21,7 @@ DSPlayer::~DSPlayer()
 
 void DSPlayer::executeThread(HWND hwnd, UINT msg, const std::wstring& path, const BuildConfig& cfg)
 {
+	pcrTrace(L"execThread:start");
 	boost::recursive_timed_mutex::scoped_lock lock(mutex_);
 
 	//DebugText(L"executeThread\n");
@@ -59,7 +63,8 @@ void DSPlayer::executeThread(HWND hwnd, UINT msg, const std::wstring& path, cons
 	}
 
 	builder_->execute(hwnd, msg, path, cfg);
-	return;
+		pcrTrace(L"execThread:end");
+return;
 }
 
 
@@ -123,8 +128,11 @@ void DSPlayer::execute()
 // ブロックするが完全に終了するまで待たない
 bool DSPlayer::terminate()
 {
+	extern void pcrTrace(const wchar_t*);						
+	pcrTrace(L"term:enter");
 	if (thTerminate_.joinable())
 	{
+		pcrTrace(L"term:thTerminate joining");
 		thTerminate_.interrupt();
 		//DebugText(L" DSPlayer::terminate thTerminate_.interrupt();\n");
 		if (!thTerminate_.timed_join(boost::posix_time::seconds(10)))
@@ -134,7 +142,18 @@ bool DSPlayer::terminate()
 		//DebugText(L" DSPlayer::terminate thTerminate_.join();\n");
 	}
 
-	boost::recursive_timed_mutex::scoped_timed_lock lock(mutex_, boost::posix_time::seconds(10));
+	pcrTrace(L"term:before-mutex");
+//[pcr-fix] the streaming execute loop holds mutex_ for its whole run, so the
+	// old timed_lock(10s) ALWAYS burned the full 10 seconds here before even
+	// signaling builder_->terminate() -> close took ~10.2s (UI thread, window
+	// already hidden). Signal stop lock-free first (terminate() on the builder
+	// is a flag, also called lock-free from executeThread's wait loop), then
+	// give the holder a short window to release before graph teardown.
+	if (builder_)
+	{
+		builder_->terminate();
+	}
+	boost::recursive_timed_mutex::scoped_timed_lock lock(mutex_, boost::posix_time::milliseconds(2500));
 	if (lock)
 	{
 		if (builder_)
@@ -145,20 +164,20 @@ bool DSPlayer::terminate()
 			}
 		}
 	}
-	else
-	{
-		return false;
-	}
+	pcrTrace(L"term:lock-done");
 
+	pcrTrace(L"term:before-exec-join");
 	if (thExecute_.joinable())
 	{
 		thExecute_.interrupt();
+		pcrTrace(L"term:exec join begin");
 		if (!thExecute_.timed_join(boost::posix_time::seconds(10)))
 		{
 			return false;
 		}
 	}
 
+	pcrTrace(L"term:done-true");
 	return true;
 }
 

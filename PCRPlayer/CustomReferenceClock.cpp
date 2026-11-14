@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+extern void pcrTrace(const wchar_t*);
+
 
 //------------------------------------------------------------------------------
 // File: RefClock.cpp
@@ -14,6 +16,7 @@
 
 #ifdef DXMPERF
 #include "dxmperf.h"
+
 #endif // DXMPERF
 
 
@@ -59,10 +62,12 @@ CustomReferenceClock::~CustomReferenceClock()
 
     if (m_hThread)
     {
-        m_bAbort = TRUE;
+
+        pcrTrace(L"clock:dtor pre-join");        m_bAbort = TRUE;
         TriggerThread();
         WaitForSingleObject( m_hThread, INFINITE );
-        EXECUTE_ASSERT( CloseHandle(m_hThread) );
+
+        pcrTrace(L"clock:dtor join done");        EXECUTE_ASSERT( CloseHandle(m_hThread) );
         m_hThread = 0;
         EXECUTE_ASSERT( CloseHandle(m_pSchedule->GetEvent()) );
 	delete m_pSchedule;

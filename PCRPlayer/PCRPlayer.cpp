@@ -88,6 +88,37 @@ static DWORD WINAPI pcrSentryThread(LPVOID)
 	return 0;
 }
 void pcrStopSentry() { s_pcrStopped = 1; s_pcrDumpArmed = 0; }
+
+//[pcr-fix] graceful-shutdown flag: the close path sets this BEFORE tearing
+//down the player; GraphManager::uninit then skips the full graph Release
+//(quartz graph_.Release() blocks ~20s here waiting on streaming threads
+//after the source died) - audio/stream are already stopped by abort+stop,
+//the window is already hidden, settings already saved, so the OS reclaims
+//the graph at process exit instead of the UI thread waiting on it.
+static volatile LONG s_pcrShutdown = 0;
+void pcrSetShutdown() { ::InterlockedExchange(&s_pcrShutdown, 1); }
+bool pcrIsShutdown() { return s_pcrShutdown != 0; }
+
+//[pcr-diag] staged close trace: only when env PCR_TRACE_CLOSE is set.
+void pcrTrace(const wchar_t* msg)
+{
+	static const BOOL on = (::GetEnvironmentVariableW(L"PCR_TRACE_CLOSE", NULL, 0) > 0);
+	if (!on) { return; }
+	wchar_t dir[MAX_PATH];
+	if (!::GetTempPathW(MAX_PATH, dir)) { return; }
+	std::wstring line = std::to_wstring(::GetTickCount64()) + L" pid" +
+		std::to_wstring(::GetCurrentProcessId()) + L" " + msg + L"\r\n";
+	std::wstring path = std::wstring(dir) + L"pcrclose.log";
+	HANDLE h = ::CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+		NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h != INVALID_HANDLE_VALUE)
+	{
+		::SetFilePointer(h, 0, NULL, FILE_END);
+		DWORD w = 0;
+		::WriteFile(h, line.c_str(), (DWORD)(line.size() * sizeof(wchar_t)), &w, NULL);
+		::CloseHandle(h);
+	}
+}
 void pcrStartSentry()
 {
 	HANDLE h = ::CreateThread(NULL, 0, pcrSentryThread, NULL, 0, NULL);

@@ -2,6 +2,8 @@
 
 
 
+
+extern void pcrTrace(const wchar_t*);
 namespace dsp {
 
 AsyncBufferingLoader::AsyncBufferingLoader()
@@ -92,9 +94,12 @@ void AsyncBufferingLoader::terminate()
 
 	if (mainloop_.joinable())
 	{
+	pcrTrace(L"loader:terminate enter");
 		mainloop_.interrupt(); // スレッド中断命令
 		//DebugText(L"AsyncBufferingLoader::thread_.interrupt();\n");
+	pcrTrace(L"loader:join begin");
 		mainloop_.join(); // 中断されるまで待機
+	pcrTrace(L"loader:join end");
 		//DebugText(L"AsyncBufferingLoader::thread_.join();\n");
 	}
 }
@@ -217,6 +222,7 @@ void AsyncBufferingLoader::consume(bool enable)
 // バッファリング本体
 void AsyncBufferingLoader::buffering()
 {
+	pcrTrace(L"loader:buffering start");
 	{
 		// 先頭データからコピー
 		boost::recursive_mutex::scoped_lock lock(mutex_);

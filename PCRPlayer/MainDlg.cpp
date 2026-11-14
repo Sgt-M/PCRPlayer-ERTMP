@@ -619,7 +619,10 @@ void CMainDlg::OnSize(UINT nType, int cx, int cy)
 void CMainDlg::OnClose()
 {
 	extern void pcrStopSentry();
-	pcrStopSentry();	//[pcr-diag] shutdown stalls timers by design; not a freeze
+	extern void pcrTrace(const wchar_t*);
+	pcrStopSentry();
+	pcrTrace(L"close:enter");
+	extern void pcrSetShutdown(); pcrSetShutdown();	//[pcr-diag] shutdown stalls timers by design; not a freeze
 	// BBSブラウザプロセス終了
 	if (gl_.value.detail.browser.close)
 	{
@@ -646,9 +649,11 @@ void CMainDlg::OnClose()
 	{
 		log_.DestroyWindow();
 	}
+	pcrTrace(L"close:dialogs");
 	//gl_.value.dialog.log = log_.cfg_;
 
 	// 履歴取得
+	pcrTrace(L"close:history-begin");
 	gl_.bbs.getHistory(false, gl_.value.detail.board.links);
 	gl_.bbs.getHistory(true, gl_.value.detail.board.threads);
 
@@ -656,6 +661,7 @@ void CMainDlg::OnClose()
 	gl_.value.window.show.idealX = layout_.GetIdealX();
 	gl_.value.window.show.idealY = layout_.GetIdealY();
 
+	pcrTrace(L"close:before-hide");
 	ShowWindow(SW_HIDE); // 閉じるを押してから停止まで時間がかかるため
 
 	// 保存しないものの初期値を退避
@@ -713,10 +719,12 @@ void CMainDlg::OnClose()
 	sl_.video = video;
 
 	// 保存
+	pcrTrace(L"close:before-save");
 	sl_.save(gl_.current);
 	
 	// フィルタグラフにはウィンドウハンドルが必要なため
 	// ウィンドウがある時点で終了処理する必要がある
+	pcrTrace(L"close:before-player-term");
 	gl_.player.terminate();
 
 	// 終了時チャンネル切断
@@ -733,8 +741,10 @@ void CMainDlg::OnClose()
 	}
 
 	// BBS停止
+	pcrTrace(L"close:before-bbs-term");
 	gl_.bbs.terminate();
 
+	pcrTrace(L"close:before-destroy");
 	CDialog::OnClose();
 }
 

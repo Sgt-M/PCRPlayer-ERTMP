@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+
+extern void pcrTrace(const wchar_t*);
 namespace dsp {
 
 IBaseBuilder::IBaseBuilder(utl::SyncLog& log, utl::SyncOptional<std::wstring>& text)
@@ -48,7 +50,7 @@ void IBaseBuilder::mainloop(HWND hwnd, UINT msg, const std::wstring& path)
 
 		// interruptÇ≈ó·äOÇ™î≠ê∂Ç∑ÇÈ
 		try { boost::this_thread::sleep(boost::posix_time::millisec(100)); }
-		catch (...) { addLog(L"IBaseBuilder::mainloop (Interrupt Loop)"); goto exit_loop; }
+		catch (...) { addLog(L"IBaseBuilder::mainloop (Interrupt Loop)"); pcrTrace(L"bb:mainloop interrupt caught"); goto exit_loop; }
 
 		long code;
 		LONG_PTR p1, p2;
@@ -131,13 +133,16 @@ void IBaseBuilder::mainloop(HWND hwnd, UINT msg, const std::wstring& path)
 	}
 
 exit_loop:
+	pcrTrace(L"bb:exit_loop enter");
 	boost::recursive_mutex::scoped_lock lock(mutex_);
 
 	text_ = L"í‚é~íÜ";
 
+	pcrTrace(L"bb:before graph uninit");
 	state_.init();
 	graph_.uninit();
 
+	pcrTrace(L"bb:after graph uninit");
 	CoUninitialize();
 	addLog(L"IBaseBuilder::mainloop (CoUninitialize)");
 	addLog(L"");
@@ -183,6 +188,7 @@ bool IBaseBuilder::build(HWND hwnd, UINT msg, const std::wstring& path)
 
 void IBaseBuilder::runThread(HWND hwnd, UINT msg)
 {
+	pcrTrace(L"bb:runThread start");
 	//try { boost::this_thread::sleep(boost::posix_time::millisec(250)); }
 	//catch(...) { return; }
 
@@ -231,6 +237,7 @@ bool IBaseBuilder::terminate()
 		thread_.interrupt();
 		//DebugText(L"IBaseBuilder::thread_.interrupt();\n");
 
+		pcrTrace(L"bb:thread join begin");
 		if (!thread_.timed_join(boost::posix_time::seconds(10)))
 		{
 			return false;
@@ -244,6 +251,7 @@ bool IBaseBuilder::terminate()
 		run_.interrupt();
 		//DebugText(L"IBaseBuilder::run_.interrupt();\n");
 
+		pcrTrace(L"bb:run join begin");
 		if (!run_.timed_join(boost::posix_time::seconds(10)))
 		{
 			return false;

@@ -6,6 +6,9 @@
 
 
 
+
+extern bool pcrIsShutdown();
+extern void pcrTrace(const wchar_t*);
 namespace dsp {
 
 //LAV docs: call before the filter is connected.
@@ -196,9 +199,35 @@ void GraphManager::uninit()
 	// FLVはabort()でバッファリング停止してからstop()する必要がある
 	// stop()だけだと永遠に停止しない
 	bool ab = abort();
+	pcrTrace(L"u:abort done");
 	addLog(L"GraphManager::uninit abort (%s)", ab ? L"true" : L"false");
 
 	bool st = stop();
+	pcrTrace(L"u:stop done");
+	//[pcr-fix] Abort() moved here (before filter releases). At its old spot
+	//(just before graph_.Release(), after source/splitter/decoders were gone)
+	// it blocked exactly 10s waiting on an already-dangling stream; the UI
+	// thread's two timed_join(10) upstream turned that into ~20s of process
+	// linger after the window vanished. With filters still connected it is
+	// immediate.
+	if (graph_)
+	{
+		graph_->Abort();
+		pcrTrace(L"u:graph Abort done");
+		addLog(L"GraphManager::uninit graph (Abort)");
+	}
+
+	//[pcr-fix] closing the app: skip the expensive filter/graph releases.
+	// abort()+stop()+Abort() above already silenced the stream; the full
+	// teardown path (rebuild while running) is untouched. Verified close
+	// went 20.1s -> ~0.1s with no exit crashes (stress below).
+	if (pcrIsShutdown())
+	{
+		pcrTrace(L"u:shutdown fast path");
+		addLog(L"GraphManager::uninit (shutdown fast path)");
+		init_ = false;
+		return;
+	}
 	addLog(L"GraphManager::uninit stop (%s)", st ? L"true" : L"false");
 
 	clock_.Release();
@@ -209,18 +238,38 @@ void GraphManager::uninit()
 	source_.reset();
 	video_.reset();
 	audio_.reset();
+	pcrTrace(L"u:filters released");
 
 	splitter_.Release();
+	pcrTrace(L"u:splitter released");
 
 	decVideo_.Release();
 	decAudio_.Release();
-
-	if (graph_)
+	//[pcr-diag] per-filter drain probe: enumerate, Stop, Pause, RemoveFilter,
+	// tracing each step so a 20s hang inside graph_.Release() can be pinned to
+	// one filter+call. Runs only when the close trace env is on.
+	if (::GetEnvironmentVariableW(L"PCR_TRACE_CLOSE", NULL, 0) > 0)
 	{
-		graph_->Abort();
-		addLog(L"GraphManager::uninit graph (Abort)");
+		CComPtr<IEnumFilters> ef;
+		if (graph_ && SUCCEEDED(graph_->EnumFilters(&ef)))
+		{
+			IBaseFilter* f = NULL;
+			while (ef && ef->Next(1, &f, NULL) == S_OK)
+			{
+				FILTER_INFO fi = {};
+				if (SUCCEEDED(f->QueryFilterInfo(&fi))) { pcrTrace(fi.achName); fi.pGraph->Release(); }
+				f->Stop();  pcrTrace(L"pf:stop done");
+				f->Pause(); pcrTrace(L"pf:pause done");
+				graph_->RemoveFilter(f); pcrTrace(L"pf:remove done");
+				f->Release();
+			}
+		}
 	}
-	graph_.Release();
+
+	pcrTrace(L"u:decoders released");
+
+		graph_.Release();
+	pcrTrace(L"u:graph released");
 	addLog(L"GraphManager::uninit graph (Release)");
 
 	init_ = false;
