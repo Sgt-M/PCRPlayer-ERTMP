@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "MainDlg.h"
+namespace pcrweb { void Log(const wchar_t* fmt, ...); }
 
 void CMainDlg::OnOption()
 {
@@ -105,10 +106,14 @@ void CMainDlg::OnOption()
 		gl_.value.detail.splitter = dlg.detail_.bbs.browser.dlg_.skin.thread.splitter_;
 		gl_.value.detail.skin.thread = dlg.detail_.bbs.browser.dlg_.skin.thread.cfg_;
 		gl_.value.detail.skin.popup = dlg.detail_.bbs.browser.dlg_.skin.popup.cfg_;
+		pcrweb::Log(L"[skinfont] OK read thread=%d popup=%d",
+			(int)gl_.value.detail.skin.thread.font.point, (int)gl_.value.detail.skin.popup.font.point);
 		//[pcr-fix] IE applied option font scaling live; WebView2 docs keep
 		//their old body CSS until next full load - patch open panes now.
 		{
 			CWnd* sub = layout_.GetSub();
+			pcrweb::Log(L"[skinfont] live sub=%p isBrowser=%d",(void*)(sub?sub->GetSafeHwnd():NULL),
+				sub && sub->IsKindOf(RUNTIME_CLASS(CBrowserDlg)));
 			if (sub && sub->IsKindOf(RUNTIME_CLASS(CBrowserDlg)))
 			{
 				((CBrowserDlg*)sub)->refreshSkinFont();
@@ -206,6 +211,8 @@ void CMainDlg::OnOption()
 		sl_.display = gl_.value.display;
 		sl_.operation = gl_.value.operation;
 		sl_.save(gl_.current);
+		pcrweb::Log(L"[skinfont] saved thread=%d popup=%d",
+			(int)gl_.value.detail.skin.thread.font.point, (int)gl_.value.detail.skin.popup.font.point);
 	}
 	else
 	{

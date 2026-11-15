@@ -49,10 +49,15 @@ void CBrowserDlg::stopScroll()
 // popup uses the popup skin.
 void CBrowserDlg::refreshSkinFont()
 {
-	if (::IsWindow(GetSafeHwnd()) && IsWebReady())
+	bool has = ::IsWindow(GetSafeHwnd());
+	bool rdy = IsWebReady();
+	BOOL er = FALSE;
+	if (has && rdy)
 	{
-		Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.thread));
+		er = Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.thread));
 	}
+	pcrweb::Log(L"[skinfont] live thread pane hwnd=%d ready=%d eval=%d pt=%d",
+		has, rdy, er, (int)gl_.value.detail.skin.thread.font.point);
 	popup_.refreshSkinFont();
 }
 
@@ -133,6 +138,11 @@ void CBrowserDlg::OnDocumentComplete(const std::wstring& url)
 	}
 	else
 	{// process Dat after new load
+		{
+			std::wstring probe;
+			Eval(L"(function(){var s=document.querySelectorAll('style');var f=s.length?s[s.length-1].textContent.replace(/\\s+/g,' ').slice(0,140):'nostyle';var t=document.querySelector('table');var th=t?t.getBoundingClientRect().height:-1;var lh=getComputedStyle(document.body).lineHeight;return f+' @ body='+getComputedStyle(document.body).fontSize+' tblH='+th+' lh='+lh+' dpr='+devicePixelRatio;})()", &probe, 3000);
+			pcrweb::Log(L"[skinfont] cssprobe: %s", probe.c_str());
+		}
 		this_.complete = true;
 		if (this_.callback)
 		{
@@ -258,6 +268,12 @@ void CBrowserDlg::OnCallbackDat()
 		this_.pos = 0;
 		bbs::BBSSkin skin(gl_.value.detail.skin.thread);
 		std::wstring header = skin.header(gl_.html.header);
+		{
+			//[pcr-dbg] dump substituted header head + cfg font
+			auto& f = gl_.value.detail.skin.thread.font;
+			pcrweb::Log(L"[skinfont] hdrbuild cfg=%d/%d len=%d head=%.160s",
+				f.point, f.pixel, (int)header.size(), std::wstring(header.substr(0,300)).c_str());
+		}
 		LoadFromString(header + L"\r\n");
 
 		int def = gl_.value.detail.board.def;

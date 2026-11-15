@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 #include "PCRPlayer.h"
+#include "PcrWeb.h"
 #include "SkinConfigDlg.h"
 #include "afxdialogex.h"
 
@@ -283,8 +284,11 @@ void CSkinConfigDlg::OnBnClickedBtnSample2()
 
 void CSkinConfigDlg::OnGetProp()
 {
+	int before = cfg_.font.point;
 	prop_.get();
 	cfg_.font.set(this_.lf);
+	pcrweb::Log(L"[skinfont] OnGetProp this=%p skin=%s lfH=%d before=%d after=%d",
+		(void*)this, cfg_.skin.c_str(), this_.lf.lfHeight, before, cfg_.font.point);
 }
 
 void CSkinConfigDlg::OnSetProp()
