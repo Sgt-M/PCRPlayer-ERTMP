@@ -34,6 +34,7 @@ public:
 #endif
 
 	void setUpdateCallback(const boost::function<void()>& callback) { update_ = callback; }
+	void refreshSkinFont();	//[pcr-fix] live-apply option font to open docs
 	bool getStatus(std::wstring& text);
 	size_t getPos() { return this_.pos; }
 	void startScroll();

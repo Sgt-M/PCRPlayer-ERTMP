@@ -50,6 +50,7 @@ class CPopupBrowserDlg : public CCustomDHtmlDialog
 	DECLARE_DYNCREATE(CPopupBrowserDlg)
 
 public:
+	void refreshSkinFont();	//[pcr-fix] live-apply option font
 	CPopupBrowserDlg(CCustomDHtmlDialog* pParent = NULL, CCustomDHtmlDialog* pTarget = NULL);
 	virtual ~CPopupBrowserDlg();
 

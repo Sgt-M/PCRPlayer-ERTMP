@@ -600,6 +600,15 @@ void CPopupBrowserDlg::OnCallbackExtract()
 }
 
 
+//[pcr-fix] see CBrowserDlg::refreshSkinFont
+void CPopupBrowserDlg::refreshSkinFont()
+{
+	if (::IsWindow(GetSafeHwnd()) && IsWebReady())
+	{
+		Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.popup));
+	}
+}
+
 void CPopupBrowserDlg::OnDocumentComplete(const std::wstring& url)
 {
 	CCustomDHtmlDialog::OnDocumentComplete(url);

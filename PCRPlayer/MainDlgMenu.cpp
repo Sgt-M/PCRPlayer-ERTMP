@@ -105,6 +105,15 @@ void CMainDlg::OnOption()
 		gl_.value.detail.splitter = dlg.detail_.bbs.browser.dlg_.skin.thread.splitter_;
 		gl_.value.detail.skin.thread = dlg.detail_.bbs.browser.dlg_.skin.thread.cfg_;
 		gl_.value.detail.skin.popup = dlg.detail_.bbs.browser.dlg_.skin.popup.cfg_;
+		//[pcr-fix] IE applied option font scaling live; WebView2 docs keep
+		//their old body CSS until next full load - patch open panes now.
+		{
+			CWnd* sub = layout_.GetSub();
+			if (sub && sub->IsKindOf(RUNTIME_CLASS(CBrowserDlg)))
+			{
+				((CBrowserDlg*)sub)->refreshSkinFont();
+			}
+		}
 
 		gl_.player.setNetwork(gl_.value.detail.network);
 		gl_.player.setType(gl_.value.detail.type);

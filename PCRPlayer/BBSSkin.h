@@ -167,6 +167,21 @@ struct SkinConfig {
 	ID id;
 };
 
+//[pcr-fix] live font patch: WebView2 has no host-side font scaling (IE
+// applied option font changes instantly to open documents); documents built
+// before an options change keep the old body CSS until the next full load.
+// Patch open documents in place when options are OK'd.
+inline std::wstring SkinFontLivePatch(const SkinConfig& cfg)
+{
+	std::wstring name = cfg.font.name;
+	for (size_t i = name.find(L'\''); i != std::wstring::npos; i = name.find(L'\'', i + 2))
+	{
+		name.insert(i, 1, L'\\');
+	}
+	return L"(function(b){if(b){b.style.fontSize='" + std::to_wstring(cfg.font.point) +
+		L"pt';b.style.fontFamily='" + name + L"';}})(document.body);";
+}
+
 class BBSSkin {
 	SkinConfig cfg_;
 	std::wstring noname_;

@@ -44,6 +44,18 @@ void CBrowserDlg::stopScroll()
 	this_.scroll = false;
 }
 
+//[pcr-fix] live-apply option font changes to the open documents (see
+// bbs::SkinFontLivePatch). Thread pane uses the thread skin; the hover
+// popup uses the popup skin.
+void CBrowserDlg::refreshSkinFont()
+{
+	if (::IsWindow(GetSafeHwnd()) && IsWebReady())
+	{
+		Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.thread));
+	}
+	popup_.refreshSkinFont();
+}
+
 void CBrowserDlg::hidePopup()
 {
 	if (::IsWindow(popup_))
