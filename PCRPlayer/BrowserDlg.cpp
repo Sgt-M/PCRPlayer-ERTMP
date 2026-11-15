@@ -52,12 +52,14 @@ void CBrowserDlg::refreshSkinFont()
 	bool has = ::IsWindow(GetSafeHwnd());
 	bool rdy = IsWebReady();
 	BOOL er = FALSE;
+	std::wstring res_;
 	if (has && rdy)
 	{
-		er = Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.thread));
+		er = Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.thread), &res_);
 	}
-	pcrweb::Log(L"[skinfont] live thread pane hwnd=%d ready=%d eval=%d pt=%d",
-		has, rdy, er, (int)gl_.value.detail.skin.thread.font.point);
+	pcrweb::Log(L"[skinfont] live thread pane hwnd=%d ready=%d eval=%d pt=%d res=%s",
+		has, rdy, er, (int)gl_.value.detail.skin.thread.font.point, res_.c_str());
+	std::wstring().swap(res_);
 	popup_.refreshSkinFont();
 }
 
@@ -271,8 +273,8 @@ void CBrowserDlg::OnCallbackDat()
 		{
 			//[pcr-dbg] dump substituted header head + cfg font
 			auto& f = gl_.value.detail.skin.thread.font;
-			pcrweb::Log(L"[skinfont] hdrbuild cfg=%d/%d len=%d head=%.160s",
-				f.point, f.pixel, (int)header.size(), std::wstring(header.substr(0,300)).c_str());
+			pcrweb::Log(L"[skinfont] hdrbuild url=%.70s cfg=%d/%d head=%.160s",
+				url.c_str(), f.point, f.pixel, std::wstring(header.substr(0,300)).c_str());
 		}
 		LoadFromString(header + L"\r\n");
 

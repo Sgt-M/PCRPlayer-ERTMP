@@ -2,6 +2,7 @@
 //[pcr-web] WebView2 based implementation
 
 #include "stdafx.h"
+#include "pcrweb.h"
 #include "PcrWeb.h"
 #include "PCRPlayer.h"
 #include "PopupBrowserDlg.h"
@@ -605,7 +606,9 @@ void CPopupBrowserDlg::refreshSkinFont()
 {
 	if (::IsWindow(GetSafeHwnd()) && IsWebReady())
 	{
-		Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.popup));
+		std::wstring res;
+		Eval(bbs::SkinFontLivePatch(gl_.value.detail.skin.popup), &res);
+		pcrweb::Log(L"[skinfont] live popup res=%s", res.c_str());
 	}
 }
 

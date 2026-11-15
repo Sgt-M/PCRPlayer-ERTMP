@@ -178,8 +178,11 @@ inline std::wstring SkinFontLivePatch(const SkinConfig& cfg)
 	{
 		name.insert(i, 1, L'\\');
 	}
-	return L"(function(b){if(b){b.style.fontSize='" + std::to_wstring(cfg.font.point) +
-		L"pt';b.style.fontFamily='" + name + L"';}})(document.body);";
+	std::wstring js =
+		L"(function(pt){var log=[];function pf(d,tag){try{var b=d.body;if(!b)return;var o=getComputedStyle(b).fontSize;b.style.fontSize=pt+'pt';var ts=d.getElementsByTagName('table');for(var x=0;x<ts.length;x++){ts[x].style.fontSize='inherit';}var n=getComputedStyle(b).fontSize;log.push(tag+'('+d.getElementsByTagName('table').length+'t):'+o+'->'+n);var fs=d.getElementsByTagName('iframe');for(var y=0;y<fs.length;y++){try{pf(fs[y].contentDocument,tag+'.f'+y);}catch(e){log.push(tag+'.f'+y+':x');}}}catch(e){log.push(tag+':err');}}pf(document,'top');var s=log.join('|');try{window.external.wwFeedback('pcrfont2:'+s);}catch(e){}return s;})(" +
+    std::to_wstring(cfg.font.point) +
+    L");";
+	return js;
 }
 
 class BBSSkin {
