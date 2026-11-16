@@ -95,6 +95,7 @@ public:
 
 	//[pcr-web] hooks
 	virtual void OnDocumentComplete(const std::wstring& url);
+	virtual void OnWebRecover();	//[pcr-hard] reset doc state so recover reload rewrites header
 	virtual HRESULT OnBrowserKey(MSG& msg);
 	virtual HRESULT OnBrowserContext(DWORD menuID, POINT* pt, const PcrElement& el);
 	virtual HRESULT OnAnchorMouseClick(const PcrElement& el);

@@ -26,6 +26,7 @@ enum {
 // forwarded browser input (see utl::BrowserHook)
 #define WM_PCR_BROWSERKEY (WM_APP + 40)   // lParam: const MSG*
 #define WM_PCR_DOC        (WM_APP + 41)   // document write finished -> OnDocumentComplete
+#define WM_PCR_FATAL      (WM_APP + 42)   //[pcr-hard] webview browser process died -> user notice
 #define WM_PCR_ENVSTRM    (WM_APP + 42)   // [pcr-marsh] marshaled env stream -> UI thread
 
 #include <docobj.h>   // OLECMDID_*
@@ -152,6 +153,7 @@ protected:
 
 	afx_msg LRESULT OnBrowserKeyMsg(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnDocMsg(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnPcrFatal(WPARAM wParam, LPARAM lParam); //[pcr-hard]
 	void SpawnController(ICoreWebView2Environment* env);
 
 	void StartCreate();
@@ -170,6 +172,8 @@ protected:
 	HWND webchild_;
 	bool ready_;
 	bool inEval_ = false;	//[pcr-hard] reentrancy guard for Eval()
+	int recover_ = 0;	//[pcr-hard] renderer auto-recover budget
+	virtual void OnWebRecover() {}	//[pcr-hard] derived panes reset their doc state before reload
 
 	bool bridgeOk_;
 	bool creating_;

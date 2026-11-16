@@ -22,6 +22,7 @@ IMPLEMENT_DYNCREATE(CCustomDHtmlDialog, CDialog)
 //new-res reveals silently stalled; BBS pane hides when offline). The IE-era
 //animated scroll was OS-timer based, so step the scroll ourselves.
 #define PCR_TIMER_SMOOTH 0x5A0C
+#define PCR_TIMER_RECOVER (0x50D2)  //[pcr-hard] renderer process died -> auto reload
 
 static double ElementScale(const PcrElement& el, double zoom)
 {
@@ -181,6 +182,20 @@ void CCustomDHtmlDialog::OnTimer(UINT_PTR nIDEvent)
 		}
 		return;
 	}
+	if (nIDEvent == PCR_TIMER_RECOVER)
+	{
+		//[pcr-hard] renderer died earlier: rebuild the page from scratch.
+		::KillTimer(GetSafeHwnd(), PCR_TIMER_RECOVER);
+		if (webview_ && ::IsWindow(GetSafeHwnd()))
+		{
+			OnWebRecover();
+			ICoreWebView2* wv = webview_;   //dialog-owned; dies with the pane
+			pcrweb::Log(L"web recover reload t=%u", ::GetTickCount());
+			CallWeb([wv]() { wv->Reload(); });
+		}
+		return;
+	}
+
 	CDialog::OnTimer(nIDEvent);
 }
 
@@ -277,7 +292,7 @@ void CCustomDHtmlDialog::WireEvents()
 				if (!::IsWindow(GetSafeHwnd())) { return S_OK; }
 				if (!ready_ && bridgeOk_) {
 					ready_ = true;
-					pcrweb::Log(L"navdone tid=%u", ::GetCurrentThreadId());
+					pcrweb::Log(L"navdone tid=%u t=%u (web ready)", ::GetCurrentThreadId(), ::GetTickCount());
 					// locate child window (subclass target for utl::BrowserHook)
 					webchild_ = ::FindWindowEx(GetSafeHwnd(), NULL, L"Chrome_WidgetWin_0", NULL);
 					pcrweb::Log(L"webchild=%p", (void*)webchild_);
@@ -378,16 +393,42 @@ void CCustomDHtmlDialog::WireEvents()
 				COREWEBVIEW2_PROCESS_FAILED_KIND kind = (COREWEBVIEW2_PROCESS_FAILED_KIND)0;
 				args->get_ProcessFailedKind(&kind);
 				pcrweb::Log(L"process failed kind=%d", (int)kind);
-				if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
+				//[pcr-hard] forensic detail: exit code when the runtime exposes it
+				{
+					ICoreWebView2ProcessFailedEventArgs2* p2 = NULL;
+					if (SUCCEEDED(args->QueryInterface(IID_PPV_ARGS(&p2))))
+					{
+						int ec = 0;
+						p2->get_ExitCode(&ec);
+						pcrweb::Log(L"process failed kind=%d exit=%d t=%u hwnd=%p", (int)kind, ec, ::GetTickCount(), (void*)GetSafeHwnd());
+						p2->Release();
+					}
+				}
+				if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED)
+				{
+					//whole WebView2 runtime gone: nothing in this pane can be
+					//revived safely -> say so (posted, so we never block in the
+					//callback) and fail fast afterwards.
 					ready_ = false;
+					::PostMessageW(GetSafeHwnd(), WM_PCR_FATAL, 0, 0);
 				}
 				else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
-					kind == COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED) {
-					//[pcr-hard] content process died (GPU/AV/env issues): every
-					//later Eval would block the full timeout. Mark not-ready so
-					//callers fail fast instead of stacking 5s stalls.
+					kind == COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED)
+				{
+					//content renderer died (GPU/AV/env). Fail fast now, then try a
+					//bounded auto-reload: derived panes reset document state in
+					//OnWebRecover() so the rebuild rewrites the skin header.
 					ready_ = false;
-					pcrweb::Log(L"process failed kind=%d: web marked NOT READY (fail-fast)", (int)kind);
+					if (recover_ < 2 && ::IsWindow(GetSafeHwnd()))
+					{
+						recover_++;
+						pcrweb::Log(L"web recover scheduled (%d) t=%u", recover_, ::GetTickCount());
+						::SetTimer(GetSafeHwnd(), PCR_TIMER_RECOVER, 1500, NULL);
+					}
+					else
+					{
+						pcrweb::Log(L"web recover budget exhausted");
+					}
 				}
 				return S_OK;
 			}).Get(), &tokFail_);
@@ -404,6 +445,7 @@ void CCustomDHtmlDialog::WireEvents()
 BEGIN_MESSAGE_MAP(CCustomDHtmlDialog, CDialog)
 	ON_MESSAGE(WM_PCR_BROWSERKEY, &CCustomDHtmlDialog::OnBrowserKeyMsg)
 	ON_MESSAGE(WM_PCR_DOC, &CCustomDHtmlDialog::OnDocMsg)
+	ON_MESSAGE(WM_PCR_FATAL, &CCustomDHtmlDialog::OnPcrFatal)  //[pcr-hard]
 	//[pcr-t3] WM_PCR_ENVSTRM hop removed (controller now spawns inside env cb)
 END_MESSAGE_MAP()
 
@@ -440,6 +482,21 @@ LRESULT CCustomDHtmlDialog::OnDocMsg(WPARAM, LPARAM)
 	//[pcr-fix] NOTE: re-wiring after pcr.open()'s document.open() is handled
 	// INSIDE the bridge (realm-local watchdog, PcrWeb.cpp) -- host-side re-eval
 	// lands in a script world with disjoint globals and cannot wire reliably.
+	return 0;
+}
+
+//[pcr-hard] WebView2 browser process is gone for this pane: clear notice,
+//posted from ProcessFailed so it surfaces outside the COM callback.
+afx_msg LRESULT CCustomDHtmlDialog::OnPcrFatal(WPARAM, LPARAM)
+{
+	static bool s_shown = false;
+	if (!s_shown)
+	{
+		s_shown = true;
+		pcrweb::Log(L"web FATAL: browser process gone -> user notice t=%u", ::GetTickCount());
+		AfxMessageBox(L"\u5185\u8535BBS\u30d6\u30e9\u30a6\u30b6\u3092\u5229\u7528\u3067\u304d\u306a\u304f\u306a\u308a\u307e\u3057\u305f\u3002\nPCRPlayer\u3092\u7d20\u660e\u306b\u518d\u8d77\u52d5\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+			MB_OK | MB_ICONWARNING);
+	}
 	return 0;
 }
 

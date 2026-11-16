@@ -154,6 +154,7 @@ public:
 
 	//[pcr-web] hooks
 	virtual void OnDocumentComplete(const std::wstring& url);
+	virtual void OnWebRecover();	//[pcr-hard]
 	virtual HRESULT OnBrowserKey(MSG& msg);
 	virtual HRESULT OnBrowserContext(DWORD menuID, POINT* ppt, const PcrElement& el);
 	virtual HRESULT OnAnchorMouseClick(const PcrElement& el);

@@ -63,6 +63,16 @@ void CBrowserDlg::refreshSkinFont()
 	popup_.refreshSkinFont();
 }
 
+//[pcr-hard] renderer auto-recover: force the rebuilt document through the
+//full header-load path again (skin CSS + bridge wiring).
+void CBrowserDlg::OnWebRecover()
+{
+	this_.header = false;
+	this_.complete = false;
+	this_.htry = 0;
+	pcrweb::Log(L"recover: doc state reset t=%u", ::GetTickCount());
+}
+
 void CBrowserDlg::hidePopup()
 {
 	if (::IsWindow(popup_))

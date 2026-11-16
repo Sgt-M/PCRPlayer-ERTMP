@@ -1045,6 +1045,7 @@ void CMainDlg::LoadHtml()
 			L"以下のファイルが必要です<br>PopupHeader.html<br>PopupRes.html<br><br>";
 	}
 
+	pcrweb::Log(L"skin load t=%u folder=%.200s ok=%d", ::GetTickCount(), thread.c_str(), (int)result.empty());
 	if (!result.empty())
 	{
 		gl_.html.header =

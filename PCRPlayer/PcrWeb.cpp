@@ -124,7 +124,7 @@ HRESULT EnsureEnvironment()
 
 	s_creating = true;
 	s_envResult = E_PENDING;
-	Log(L"env folder=%s", folder.c_str());
+	Log(L"env folder=%s t=%u", folder.c_str(), ::GetTickCount());
 	HRESULT hr = E_FAIL;
 	//[pcr-web] loader may throw (WRL/std) instead of returning a failure HRESULT
 	try {
@@ -135,7 +135,7 @@ HRESULT EnsureEnvironment()
 					std::lock_guard<std::recursive_mutex> lock(s_mtx);
 					s_env = env;
 					s_envResult = result;
-					Log(L"env cb: result=0x%08x glue=%p", result,
+					Log(L"env cb t=%u result=0x%08x glue=%p", ::GetTickCount(), result,
 						(void*)::GetModuleHandleW(L"EmbeddedBrowserWebView.dll"));
 					s_creating = false;
 					if (FAILED(result)) { Log(L"env create failed hr=0x%08x", result); }

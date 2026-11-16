@@ -612,6 +612,12 @@ void CPopupBrowserDlg::refreshSkinFont()
 	}
 }
 
+//[pcr-hard] see CBrowserDlg::OnWebRecover
+void CPopupBrowserDlg::OnWebRecover()
+{
+	this_.header = false;
+}
+
 void CPopupBrowserDlg::OnDocumentComplete(const std::wstring& url)
 {
 	CCustomDHtmlDialog::OnDocumentComplete(url);
