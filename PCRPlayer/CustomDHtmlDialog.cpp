@@ -158,14 +158,26 @@ void CCustomDHtmlDialog::OnTimer(UINT_PTR nIDEvent)
 	{
 		if (!smoothActive_) { ::KillTimer(GetSafeHwnd(), PCR_TIMER_SMOOTH); return; }
 		long top = 0, sh = 0, ch = 0;
-		if (!GetScrollParam(top, sh, ch)) { KillSmoothScroll(); return; }
+		if (!GetScrollParam(top, sh, ch))
+		{
+			//[pcr-fix] a transient refusal from the Eval reentrancy guard must
+			//NOT kill the reveal (that regressed auto-scroll to almost nothing):
+			//just keep the timer and retry on the next tick.
+			if (evalRefused_) { return; }
+			KillSmoothScroll();
+			return;
+		}
 		if (smoothTarget_ < 0) { smoothTarget_ = sh - ch; } // follow live bottom
 		long rem = smoothTarget_ - top;
 		if (rem == 0) { KillSmoothScroll(); return; }
 		long step = rem / 6;
 		if (step == 0) { step = (rem > 0) ? 1 : -1; }
 		if (!EvalBoolOk(L"pcr.scrollBy(" + std::to_wstring((long long)step) + L")"))
-		{ KillSmoothScroll(); return; }
+		{
+			if (evalRefused_) { return; } //[pcr-fix] transient refusal: retry next tick
+			KillSmoothScroll();
+			return;
+		}
 		return;
 	}
 
@@ -731,9 +743,11 @@ BOOL CCustomDHtmlDialog::Eval(const std::wstring& js, std::wstring* result, DWOR
 	//posted messages once the outer wait unwinds.
 	if (inEval_)
 	{
+		evalRefused_ = true;
 		pcrweb::Log(L"eval reentry skip: %.60s", js.c_str());
 		return FALSE;
 	}
+	evalRefused_ = false;
 	struct EvalGuard { bool& f; ~EvalGuard() { f = false; } } guard = { inEval_ };
 	inEval_ = true;
 

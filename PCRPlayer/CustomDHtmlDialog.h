@@ -172,6 +172,7 @@ protected:
 	HWND webchild_;
 	bool ready_;
 	bool inEval_ = false;	//[pcr-hard] reentrancy guard for Eval()
+	bool evalRefused_ = false;	//[pcr-fix] last Eval refused by reentry guard
 	int recover_ = 0;	//[pcr-hard] renderer auto-recover budget
 	virtual void OnWebRecover() {}	//[pcr-hard] derived panes reset their doc state before reload
 
