@@ -94,6 +94,7 @@ public:
 	BOOL ScrollToTop();
 	BOOL ScrollToBottom();
 	BOOL ScrollToBottomBy(long y);
+	BOOL EvalWasRefused() const { return evalRefused_ ? TRUE : FALSE; } //[pcr-fix] last Eval failed only due to reentry guard (transient)
 	BOOL GetScrollParam(long& scrollTop, long& scrollHeight, long& clientHeight);
 	BOOL SmoothScrollTo(long y);   // stepped reveal; y<0 = chase live bottom
 	void KillSmoothScroll();

@@ -168,6 +168,8 @@ void CCustomDHtmlDialog::OnTimer(UINT_PTR nIDEvent)
 			return;
 		}
 		if (smoothTarget_ < 0) { smoothTarget_ = sh - ch; } // follow live bottom
+		static LONG smTick = 0;
+		if (++smTick % 8 == 1) { pcrweb::Log(L"smooth tick top=%ld sh=%ld ch=%ld target=%ld", top, sh, ch, smoothTarget_); }
 		long rem = smoothTarget_ - top;
 		if (rem == 0) { pcrweb::Log(L"smooth reached top=%ld target=%ld", top, smoothTarget_); KillSmoothScroll(); return; }
 		long step = rem / 6;
@@ -909,6 +911,7 @@ BOOL CCustomDHtmlDialog::SmoothScrollTo(long y)
 		KillSmoothScroll();
 		return EvalBoolOk(L"pcr.scrollTo(" + std::to_wstring((long long)y) + L", 0)");
 	}
+	pcrweb::Log(L"smooth start top=%ld sh=%ld ch=%ld y=%ld", top, sh, ch, y);
 	smoothTarget_ = y;
 	smoothActive_ = true;
 	::SetTimer(GetSafeHwnd(), PCR_TIMER_SMOOTH, 10, NULL);

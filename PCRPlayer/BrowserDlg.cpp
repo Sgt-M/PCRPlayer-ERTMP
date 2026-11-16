@@ -382,6 +382,7 @@ void CBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 		{
 			if (!ScrollToBottomBy(gl_.value.detail.scroll.delta))
 			{
+				if (EvalWasRefused()) { break; } //[pcr-fix] transient reentry refusal is NOT 'reached bottom': keep crawling (was dying after 1px = 'barely scrolls' for new posts)
 				if (gl_.value.detail.scroll.last)
 				{
 					stopScroll();
