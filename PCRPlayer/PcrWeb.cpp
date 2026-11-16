@@ -400,7 +400,7 @@ LR"JS(
       return JSON.stringify({ top: top, sh: sh, ch: ih, dpr: window.devicePixelRatio || 1 });
     },
     scrollTo: function (y, smooth) { if (smooth) { p.hold(); } else { p._prog = true; } window.scrollTo({ left: 0, top: y, behavior: smooth ? 'smooth' : 'auto' }); return 'ok'; },
-    scrollBy: function (y) { p._prog = true; window.scrollBy(0, y); return 'ok'; },
+    scrollBy: function (y) { p.hold(); window.scrollBy(0, y); return 'ok'; }, //[pcr-fix] stepped reveal fires many scrollBy steps; a one-shot _prog lets the SECOND scroll event report prog=0 which the host reads as 'user grabbed' and kills the reveal (visible on long reveals = large fonts)
 
     scale: function () { // physical/logical factor (dpr * zoom)
       var b = document.body;

@@ -169,12 +169,13 @@ void CCustomDHtmlDialog::OnTimer(UINT_PTR nIDEvent)
 		}
 		if (smoothTarget_ < 0) { smoothTarget_ = sh - ch; } // follow live bottom
 		long rem = smoothTarget_ - top;
-		if (rem == 0) { KillSmoothScroll(); return; }
+		if (rem == 0) { pcrweb::Log(L"smooth reached top=%ld target=%ld", top, smoothTarget_); KillSmoothScroll(); return; }
 		long step = rem / 6;
 		if (step == 0) { step = (rem > 0) ? 1 : -1; }
 		if (!EvalBoolOk(L"pcr.scrollBy(" + std::to_wstring((long long)step) + L")"))
 		{
 			if (evalRefused_) { return; } //[pcr-fix] transient refusal: retry next tick
+			pcrweb::Log(L"smooth killed by scrollBy eval failure");
 			KillSmoothScroll();
 			return;
 		}
@@ -525,7 +526,7 @@ void CCustomDHtmlDialog::DispatchWebMessage(const std::wstring& json)
 	if (e == L"scroll") {
 		double prog = 0;
 		pcrweb::JsonGetNum(body, L"prog", prog);
-		if (prog == 0) { KillSmoothScroll(); } // user grabbed the page (IE-era behavior)
+		if (prog == 0) { if (smoothActive_) { pcrweb::Log(L"smooth killed by user-scroll msg"); } KillSmoothScroll(); } // user grabbed the page (IE-era behavior)
 		OnBrowserScroll(prog != 0);
 		return;
 	}
