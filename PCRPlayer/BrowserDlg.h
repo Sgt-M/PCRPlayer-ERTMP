@@ -55,6 +55,7 @@ protected:
 			, scroll(false)
 			, newres(false)
 			, first(false)
+			, htry(0)
 			, pos(0)
 			, time(0)
 		{}
@@ -69,6 +70,7 @@ protected:
 		bool scroll;//scrolling
 		bool newres;//new posts fetched this callback
 		bool first;//load >>1
+		int htry;//[pcr-hard] bounded retries for header load refused-on-reentry
 		size_t pos;//load position
 		DWORD time;
 		std::vector<bbs::ResInfo> dat;

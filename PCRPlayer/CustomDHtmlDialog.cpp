@@ -381,6 +381,14 @@ void CCustomDHtmlDialog::WireEvents()
 				if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
 					ready_ = false;
 				}
+				else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
+					kind == COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED) {
+					//[pcr-hard] content process died (GPU/AV/env issues): every
+					//later Eval would block the full timeout. Mark not-ready so
+					//callers fail fast instead of stacking 5s stalls.
+					ready_ = false;
+					pcrweb::Log(L"process failed kind=%d: web marked NOT READY (fail-fast)", (int)kind);
+				}
 				return S_OK;
 			}).Get(), &tokFail_);
 	pcrweb::Log(L"WireEvents done");
@@ -658,6 +666,19 @@ BOOL CCustomDHtmlDialog::GetBrowserSize(CSize& size)
 BOOL CCustomDHtmlDialog::Eval(const std::wstring& js, std::wstring* result, DWORD timeoutMs)
 {
 	if (!webview_ || !ready_) { return FALSE; }
+	//[pcr-hard] Eval() pumps the message loop while waiting, so handlers run
+	//inside that pump used to re-enter Eval() (doccomplete/WM_PCR_DOC/timers
+	//during startup): nested pumps share the COM wait and are the suspect in
+	//the "freeze ~5s then die on some machines" reports (5s == Eval default
+	//timeout). Nested calls are refused now; callers retry via their own
+	//posted messages once the outer wait unwinds.
+	if (inEval_)
+	{
+		pcrweb::Log(L"eval reentry skip: %.60s", js.c_str());
+		return FALSE;
+	}
+	struct EvalGuard { bool& f; ~EvalGuard() { f = false; } } guard = { inEval_ };
+	inEval_ = true;
 
 	struct Ctx {
 		HANDLE ev;

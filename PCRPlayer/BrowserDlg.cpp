@@ -135,8 +135,18 @@ void CBrowserDlg::OnDocumentComplete(const std::wstring& url)
 
 		bbs::BBSSkin skin(gl_.value.detail.skin.thread);
 		std::wstring html = skin.header(gl_.html.header);
-		LoadFromString(html);
-		this_.header = true;
+		//[pcr-hard] LoadFromString can be refused by the Eval reentrancy
+		//guard. Never latch header=true over an unwritten document - retry
+		//via a fresh WM_PCR_DOC, bounded (blank pane beats freeze/crash).
+		if (LoadFromString(html))
+		{
+			this_.header = true;
+		}
+		else if (this_.htry++ < 5)
+		{
+			pcrweb::Log(L"hdr load refused, retry #%d", this_.htry);
+			::PostMessageW(GetSafeHwnd(), WM_PCR_DOC, 0, 0);
+		}
 	}
 	else
 	{// process Dat after new load

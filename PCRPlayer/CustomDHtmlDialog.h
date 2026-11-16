@@ -169,6 +169,8 @@ protected:
 	ICoreWebView2* webview_;
 	HWND webchild_;
 	bool ready_;
+	bool inEval_ = false;	//[pcr-hard] reentrancy guard for Eval()
+
 	bool bridgeOk_;
 	bool creating_;
 	int navAllow_;
