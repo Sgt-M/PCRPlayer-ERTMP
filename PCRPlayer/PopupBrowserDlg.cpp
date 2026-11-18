@@ -38,6 +38,20 @@ CPopupBrowserDlg::~CPopupBrowserDlg()
 
 //=============================================================================
 
+//[pcr-fix] throttled 'why is the popup still open' trace (watchdog diagnosis)
+static void pcrPopupKeep(void* hwnd, const wchar_t* why)
+{
+	static void* lastHwnd = NULL;
+	static DWORD lastTick = 0;
+	DWORD t = GetTickCount();
+	if (hwnd != lastHwnd || t - lastTick > 1000)
+	{
+		lastHwnd = hwnd;
+		lastTick = t;
+		pcrweb::Log(L"popup keep=%s hwnd=%p", why, hwnd);
+	}
+}
+
 void CPopupBrowserDlg::onMouseMove()
 {
 	if (parent_ && !this_.hover)
@@ -60,11 +74,20 @@ void CPopupBrowserDlg::onMouseMove()
 		}
 	}
 
-	if (this_.target.IsRectEmpty()) { return; }
-
-	if (this_.cancel ||
-		(popup_ && ::IsWindow(popup_->GetSafeHwnd()) && ::IsWindowVisible(popup_->GetSafeHwnd())))
+	if (this_.target.IsRectEmpty())
 	{
+		if (IsWindowVisible()) { pcrPopupKeep(GetSafeHwnd(), L"notarget"); }
+		return;
+	}
+
+	if (this_.cancel)
+	{
+		if (IsWindowVisible()) { pcrPopupKeep(GetSafeHwnd(), L"cancel"); }
+		return;
+	}
+	if (popup_ && ::IsWindow(popup_->GetSafeHwnd()) && ::IsWindowVisible(popup_->GetSafeHwnd()))
+	{
+		if (IsWindowVisible()) { pcrPopupKeep(GetSafeHwnd(), L"child"); }
 		return;
 	}
 
@@ -75,7 +98,7 @@ void CPopupBrowserDlg::onMouseMove()
 		//so it stayed open (text selectable/clickable). Reproduce: cursor over
 		//this popup or its webview child = keep.
 		CWnd* wnd = WindowFromPoint(pt);
-		if (wnd && ::GetAncestor(wnd->GetSafeHwnd(), GA_ROOT) == GetSafeHwnd()) { return; }
+		if (wnd && ::GetAncestor(wnd->GetSafeHwnd(), GA_ROOT) == GetSafeHwnd()) { pcrPopupKeep(GetSafeHwnd(), L"onpopup"); return; }
 
 		CRect rc(this_.target);
 		if (!this_.readOnly && this_.margin)
@@ -89,7 +112,7 @@ void CPopupBrowserDlg::onMouseMove()
 				rc.InflateRect(TARGET_MARGIN, TARGET_EXPAND);
 			}
 		}
-		if (rc.PtInRect(pt)) { return; }
+		if (rc.PtInRect(pt)) { pcrPopupKeep(GetSafeHwnd(), L"ontarget"); return; }
 	}
 
 	this_.target.SetRectEmpty();
@@ -142,6 +165,7 @@ bool CPopupBrowserDlg::onMouseLeave()
 void CPopupBrowserDlg::hide()
 {
 	this_.cancel = false;
+	this_.show = false; //[pcr-fix] a pending delayed-show must die with hide(); it used to resurrect an orphan popup (empty target, invisible to onMouseMove) during fast hover sweeps
 	showWindow(false);
 	if (popup_) { popup_->hide(); }
 }
@@ -416,6 +440,8 @@ void CPopupBrowserDlg::setShowWindow(bool show)
 
 void CPopupBrowserDlg::showWindow()
 {
+	//[pcr-fix] never show an orphan (target cleared while the delayed-show was pending)
+	if (this_.show && this_.target.IsRectEmpty()) { this_.show = false; return; }
 	showWindow(this_.show);
 	this_.show = false;
 }
@@ -876,6 +902,8 @@ void CPopupBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 			//is over it or its anchor and closes it otherwise (also self-kills via
 			//showWindow(false) once hidden).
 			if (!IsWindowVisible()) { KillTimer(TIMER_ID_WATCH); break; }
+			//[pcr-fix] visible + no target = orphan (hide logic is blind to it); close it
+			if (this_.target.IsRectEmpty()) { pcrPopupKeep(GetSafeHwnd(), L"orphan-hide"); showWindow(false); break; }
 			onMouseMove();
 			break;
 		}
