@@ -146,60 +146,88 @@ bool WindowSnap::screenSnapY(HWND hwnd, const MONITORINFO& mi, CRect& rc)
 	return false;
 }
 
-class Side {
-	HWND hwnd_;
-public:
-	Side(LONG x, LONG y)
-		: hwnd_(WindowFromPoint(CPoint(x, y)))
-	{}
+//[pcr-fix] the old detection probed one point per side with WindowFromPoint,
+//which only sees what is VISIBLE there: while the snap target was overlapped
+//by the dragged window the probe returned self or the desktop and window-snap
+//silently failed (the user had to un-overlap first). Scan top-level windows
+//instead so covered windows snap too.
+namespace {
+struct SnapFind {
+	HWND self;
+	bool xdir;
+	CRect org;
+	LONG dist;
+	LONG best;
+	bool found;
+};
 
-	bool getRect(CRect& other)
+BOOL CALLBACK snapFindProc(HWND h, LPARAM lp)
+{
+	SnapFind& f = *(SnapFind*)lp;
+	if (h == f.self || ::GetAncestor(h, GA_ROOT) == f.self) { return TRUE; }
+	if (!::IsWindowVisible(h) || ::IsIconic(h) || !::IsWindowEnabled(h)) { return TRUE; }
+
+	CRect o;
+	if (!utl::getWindowShapeRect(h, o))
 	{
-		if (!hwnd_) { return false; }
-		HWND hother = GetAncestor(hwnd_, GA_ROOT);
-		if (!hother) { return false; }
-
-		if (utl::getWindowShapeRect(hother, other)) { return true; }
-		if (GetWindowRect(hother, other)) { return true; }
-		return false;
+		if (!::GetWindowRect(h, &o)) { return TRUE; }
 	}
+	if (o.IsRectEmpty()) { return TRUE; }
+
+	auto tryDelta = [&](LONG d) {
+		if (abs(d) < f.dist && abs(d) < abs(f.best)) { f.best = d; f.found = true; }
+	};
+
+	if (f.xdir)
+	{
+		if (o.top < f.org.bottom && o.bottom > f.org.top) //[pcr] keep vertical overlap requirement (old probe semantics)
+		{
+			tryDelta(o.right - f.org.left);  // my left  <- their right
+			tryDelta(o.left - f.org.right);  // my right <- their left
+		}
+	}
+	else
+	{
+		if (o.left < f.org.right && o.right > f.org.left)
+		{
+			tryDelta(o.bottom - f.org.top);  // my top    <- their bottom
+			tryDelta(o.top - f.org.bottom);  // my bottom <- their top
+		}
+	}
+	return TRUE;
+}
+
+bool findSnapDelta(HWND hwnd, bool xdir, const CRect& org, LONG dist, LONG& delta)
+{
+	SnapFind f;
+	f.self = hwnd;
+	f.xdir = xdir;
+	f.org = org;
+	f.dist = dist;
+	f.best = dist;
+	f.found = false;
+	::EnumWindows(snapFindProc, (LPARAM)&f);
+	if (!f.found) { return false; }
+	delta = f.best;
+	return true;
+}
 };
 
 bool WindowSnap::windowSnapX(HWND hwnd, const CRect& org, CRect& rc)
 {
-	Side left(org.left - distance_.window, org.top + org.Height() / 2);
-	Side right(org.right + distance_.window, org.top + org.Height() / 2);
-
-	CRect other;
-	if (left.getRect(other) && snapW(other.right, rc.left))
-	{
-		rc.OffsetRect(other.right - rc.left, 0); return true;
-	}
-	else if (right.getRect(other) && snapW(other.left, rc.right))
-	{
-		rc.OffsetRect(other.left - rc.right, 0); return true;
-	}
-	return false;
+	LONG d = 0;
+	if (!findSnapDelta(hwnd, true, org, distance_.window, d)) { return false; }
+	rc.OffsetRect(d, 0);
+	return true;
 }
 
 bool WindowSnap::windowSnapY(HWND hwnd, const CRect& org, CRect& rc)
 {
-	Side top(org.left + org.Width() / 2, org.top - distance_.window);
-	Side bottom(org.left + org.Width() / 2, org.bottom + distance_.window);
-
-	CRect other;
-	if (top.getRect(other) && snapW(other.bottom, rc.top))
-	{
-		rc.OffsetRect(0, other.bottom - rc.top); return true;
-	}
-	else if (bottom.getRect(other) && snapW(other.top, rc.bottom))
-	{
-		rc.OffsetRect(0, other.top - rc.bottom); return true;
-	}
-	return false;
+	LONG d = 0;
+	if (!findSnapDelta(hwnd, false, org, distance_.window, d)) { return false; }
+	rc.OffsetRect(0, d);
+	return true;
 }
-
-
 
 
 void SizeMove::setRect(const CRect& rc)
