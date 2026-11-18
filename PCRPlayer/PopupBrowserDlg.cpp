@@ -11,6 +11,7 @@
 
 enum TIMER_ID {
 	TIMER_ID_POPUP,
+	TIMER_ID_WATCH,
 };
 
 #define TARGET_EXPAND 30
@@ -422,7 +423,9 @@ void CPopupBrowserDlg::showWindow()
 void CPopupBrowserDlg::showWindow(bool show)
 {
 	if (!::IsWindow(GetSafeHwnd())) { return; }
+	pcrweb::Log(L"popup show=%d vis=%d hwnd=%p", (int)show, (int)IsWindowVisible(), (void*)GetSafeHwnd());
 	KillTimer(TIMER_ID_POPUP);
+	KillTimer(TIMER_ID_WATCH);
 
 	if (show)
 	{
@@ -432,6 +435,10 @@ void CPopupBrowserDlg::showWindow(bool show)
 			ShowWindow(SW_SHOWNA);
 			ChangeFocus();
 			NudgeWebVisible();	//[pcr-fix] child windows stay hidden otherwise
+			//[pcr-fix] watchdog: the hide decision was event-driven only, so a cursor
+			//leaving for another window (never re-entering any webview) produced no
+			//event and the popup stayed forever; re-run the IE-style cursor poll.
+			SetTimer(TIMER_ID_WATCH, 300, NULL);
 		}
 	}
 	else
@@ -859,6 +866,17 @@ void CPopupBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 		{
 			showWindow();
 			KillTimer(TIMER_ID_POPUP);
+			break;
+		}
+	case TIMER_ID_WATCH:
+		{
+			//[pcr-fix] IE polled the hide decision on mousemove; WebView2 gives no
+			//native mouse messages and the bridge only reports inside-document
+			//movement, so poll it: onMouseMove() keeps the popup while the cursor
+			//is over it or its anchor and closes it otherwise (also self-kills via
+			//showWindow(false) once hidden).
+			if (!IsWindowVisible()) { KillTimer(TIMER_ID_WATCH); break; }
+			onMouseMove();
 			break;
 		}
 	}
