@@ -166,7 +166,8 @@ public:
 
 	void getInfo(BBSInfo& info);
 
-	bool change(const std::wstring& key);
+	bool change(const std::wstring& key, bool autoMove = false); //[pcr-next] autoMove: roll-over move (view continues the display)
+	bool consumeMoved();
 
 	int loadSetting(const std::wstring& userAgent, const network::Proxy& proxy, int timeout, DWORD& code);
 	int loadSubject(const std::wstring& userAgent, const network::Proxy& proxy, int timeout, DWORD& code);
@@ -179,6 +180,8 @@ public:
 		DWORD& code, std::wstring& error);
 
 private:
+	bool movedNext_ = false; //[pcr-next] last change() was an automatic roll-over move
+
 	bool check(const std::wstring& str, std::wstring& error);
 	bool datetimeid(ResInfo& res, const std::wstring& datetime);
 

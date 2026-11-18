@@ -27,8 +27,14 @@ bool CBrowserDlg::createRes(int size)
 	gl_.bbs.getNoName(noname);
 	bbs::BBSSkin skin(gl_.value.detail.skin.thread, noname);
 
-	auto resid = [](const std::wstring &html, const bbs::ResInfo& info) {
-		return L"<div id=\"res:" + info.number + L"\">" + html + L"</div>";
+	auto resid = [&](const std::wstring &html, const bbs::ResInfo& info) {
+		std::wstring id = info.number;
+		if (this_.resBase > 0)
+		{//[pcr-next] keep display ids unique across the concatenated threads
+			__int64 n = _wtoi64(info.number.c_str());
+			id = std::to_wstring((__int64)(n + (__int64)this_.resBase));
+		}
+		return L"<div id=\"res:" + id + L"\">" + html + L"</div>";
 	};
 
 	auto resskin = [&](const bbs::BBSSkin &skin, const bbs::ResInfo& info)->std::wstring {

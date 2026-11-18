@@ -58,6 +58,7 @@ protected:
 			, htry(0)
 			, pos(0)
 			, time(0)
+			, resBase(0)
 		{}
 
 		bool header;//load new header
@@ -74,7 +75,13 @@ protected:
 		size_t pos;//load position
 		DWORD time;
 		std::vector<bbs::ResInfo> dat;
+		LONG resBase;//[pcr-next] display-number base offset (roll-over continuation)
+		std::vector<std::pair<LONG, LONG> > resHist;//[pcr-next] {base, count} of earlier threads in this document
 	} this_;
+
+	bool nextThreadSeparator(const std::wstring& url); //[pcr-next]
+	std::wstring resolveResAnchor(int num, const std::wstring& parentDispId) override; //[pcr-next]
+	LONG getResBase() const override { return this_.resBase; }
 
 	void autoScroll(bool latest = true);
 	bool createRes(int size = 0);

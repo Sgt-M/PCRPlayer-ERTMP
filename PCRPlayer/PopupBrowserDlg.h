@@ -118,6 +118,26 @@ protected:
 		bool cancel;//cancel popup erase
 	} this_;
 
+	//[pcr-marsh] deferred destruction for nested popups: the UI thread used
+	//to `delete popup_` inside its own message handlers (WM_MOUSELEAVE chain)
+	//and on a different thread from the bridge dispatch, so a click could
+	//run against a freed dialog. Entries take a use-count; kill() marks the
+	//object dead and defers the real delete until no handler frame for it can
+	//be on the stack (posted self-kill message).
+	int use_;
+	bool dead_;
+	bool pendingKill_;
+	void retain() { ++use_; }
+	void release();
+	void kill();
+	void destroyNow();
+	struct Use {
+		CPopupBrowserDlg* p;
+		Use(CPopupBrowserDlg* x) : p(x) { p->retain(); }
+		~Use() { p->release(); }
+	};
+	afx_msg LRESULT OnPcrKill(WPARAM, LPARAM);
+
 	bool calcScrollSize(CSize& size);
 	bool calcWindowSize(const CSize& scroll, CSize& size);
 	void setPosition();

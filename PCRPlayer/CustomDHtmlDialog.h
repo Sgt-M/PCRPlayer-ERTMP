@@ -38,6 +38,7 @@ struct PcrElement {
 	std::wstring cls;    // className
 	std::wstring href;   // anchor href (raw attribute) or img src
 	std::wstring text;
+	std::wstring pres;   //[pcr-next] nearest ancestor [id^="res:"] (display res id)
 	double x, y, w, h;   // getBoundingClientRect (CSS px, viewport based)
 	double dpr;
 
@@ -108,6 +109,10 @@ public:
 	BOOL GetElementAt(const CPoint& screen, PcrElement& el);            // elementFromPoint
 	BOOL GetElementById(const std::wstring& id, PcrElement& el);
 	BOOL ScrollIntoViewId(const std::wstring& id);
+	BOOL HasResId(const std::wstring& id); //[pcr-next]
+	//[pcr-next] roll-over continuation link mapping (CBrowserDlg overrides)
+	virtual std::wstring resolveResAnchor(int num, const std::wstring& parentDispId);
+	virtual LONG getResBase() const { return 0; }
 
 	//[pcr-web] stepped reveal state (PCR_TIMER_SMOOTH)
 	long smoothTarget_;

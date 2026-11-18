@@ -71,6 +71,7 @@ void BBSOperator::initialize()
 	dat_.clear();
 	partial_.clear();
 	init_.clear();
+	moved_.clear(); //[pcr-next]
 	extract_.clear();
 	subject_.clear();
 	title_.clear();
@@ -257,7 +258,7 @@ bool BBSOperator::change(const std::wstring& key)
 	if (thread_.change.joinable()) { return false; }
 
 	ReloadControl ctrl(cfg_.func([](const BoardControl& cfg) { return cfg.reload; }), true, false, false);
-	boost::thread thr(&BBSOperator::changeThread, this, key, ctrl);
+	boost::thread thr(&BBSOperator::changeThread, this, key, ctrl, true); //[pcr-next] operator::change = automatic roll-over move
 	thread_.change.swap(thr);
 	return true;
 }
@@ -628,7 +629,7 @@ void BBSOperator::executeThread(const std::wstring& board, const BoardControl& c
 					ThreadInfo info;
 					if (getFastest(info))
 					{
-						changeThread(info.key, ctrl);
+						changeThread(info.key, ctrl, true); //[pcr-next]
 						return;
 					}
 				}
@@ -644,7 +645,7 @@ void BBSOperator::executeThread(const std::wstring& board, const BoardControl& c
 			ThreadInfo info;
 			if (getFastest(info))
 			{
-				changeThread(info.key, ctrl);
+				changeThread(info.key, ctrl, true); //[pcr-next]
 				return;
 			}
 		}
@@ -880,10 +881,12 @@ void BBSOperator::createThread(int diff, bool reset, bool scroll)
 	{
 		std::vector<ResInfo> dat;
 		bool init = true;
-		if (bbs_.getDat(dat, init))
+		bool moved = false;
+		if (bbs_.getDat(dat, init, moved))
 		{
 			dat_ = dat;
 			if (init || !init_) { init_ = true; }
+			if (moved || !moved_) { moved_ = true; } //[pcr-next] stick until read, like init_
 		}
 	}
 
@@ -1046,11 +1049,11 @@ bool BBSOperator::subjectThread()
 	return false;
 }
 
-void BBSOperator::changeThread(const std::wstring& key, const ReloadControl& ctrl)
+void BBSOperator::changeThread(const std::wstring& key, const ReloadControl& ctrl, bool autoMove)
 {
 	boost::recursive_mutex::scoped_lock lock(mutex_.change);
 
-	if (!bbs_.change(key)) { return; }
+	if (!bbs_.change(key, autoMove)) { return; }
 
 	addHistory(true);
 	

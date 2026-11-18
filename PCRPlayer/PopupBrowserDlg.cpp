@@ -14,6 +14,9 @@ enum TIMER_ID {
 	TIMER_ID_WATCH,
 };
 
+//[pcr-marsh] deferred self-kill for use-counted popups (see CPopupBrowserDlg::kill)
+#define WM_PCR_POPUPKILL (WM_APP + 45)
+
 #define TARGET_EXPAND 30
 #define TARGET_MARGIN 8
 
@@ -28,6 +31,9 @@ CPopupBrowserDlg::CPopupBrowserDlg(CCustomDHtmlDialog* pParent /*=NULL*/, CCusto
 	, target_(pTarget ? pTarget : pParent)
 	, popup_(NULL)
 	, counter_(0)
+	, use_(0)			//[pcr-marsh]
+	, dead_(false)		//[pcr-marsh]
+	, pendingKill_(false)	//[pcr-marsh]
 {
 }
 
@@ -54,6 +60,8 @@ static void pcrPopupKeep(void* hwnd, const wchar_t* why)
 
 void CPopupBrowserDlg::onMouseMove()
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return; }		//[pcr-marsh]
 	if (parent_ && !this_.hover)
 	{
 		CPoint pt;
@@ -121,6 +129,8 @@ void CPopupBrowserDlg::onMouseMove()
 
 bool CPopupBrowserDlg::onMouseLeave()
 {
+	Use u(this);					//[pcr-marsh]
+	if (dead_) { return true; }		//[pcr-marsh]
 	this_.hover = false;
 	CPoint pt;
 	if (GetCursorPos(&pt))
@@ -164,6 +174,8 @@ bool CPopupBrowserDlg::onMouseLeave()
 
 void CPopupBrowserDlg::hide()
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return; }		//[pcr-marsh]
 	this_.cancel = false;
 	this_.show = false; //[pcr-fix] a pending delayed-show must die with hide(); it used to resurrect an orphan popup (empty target, invisible to onMouseMove) during fast hover sweeps
 	showWindow(false);
@@ -172,6 +184,8 @@ void CPopupBrowserDlg::hide()
 
 BOOL CPopupBrowserDlg::popup(const CRect& area, const PopupBrowserConfig& cfg, bool margin)
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return FALSE; }	//[pcr-marsh]
 	cfg_ = cfg;
 	this_.margin = false;
 	return preparePopup(area);
@@ -184,7 +198,8 @@ BOOL CPopupBrowserDlg::popup(const PcrElement& el, const PopupBrowserConfig& cfg
 
 BOOL CPopupBrowserDlg::popup(CPopupBrowserDlg* parent, const PcrElement& el, const PopupBrowserConfig& cfg)
 {
-	if (!parent_ || !el.valid()) { return FALSE; }
+	Use u(this);						//[pcr-marsh]
+	if (dead_ || !parent_ || !el.valid()) { return FALSE; }
 
 	cfg_ = cfg;
 	this_.parent = parent;
@@ -236,6 +251,7 @@ BOOL CPopupBrowserDlg::popup(CPopupBrowserDlg* parent, const PcrElement& el, con
 
 void CPopupBrowserDlg::createPopup()
 {
+	if (dead_) { return; }	//[pcr-marsh] never extend a dead chain
 	if (!popup_)
 	{
 		popup_ = new CPopupBrowserDlg(this, target_);
@@ -247,13 +263,55 @@ void CPopupBrowserDlg::destroyPopup()
 {
 	if (popup_)
 	{
-		if (::IsWindow(popup_->GetSafeHwnd()))
-		{
-			popup_->DestroyWindow();
-		}
-		delete popup_;
+		//[pcr-marsh] detach first, then let the object die when the last
+		//handler using it leaves (kill defers while use_ > 0)
+		CPopupBrowserDlg* p = popup_;
 		popup_ = NULL;
+		p->kill();
 	}
+}
+
+//[pcr-marsh] mark dead + recursive child kill; real delete happens with no
+//handler frame for this object on the stack (immediately when idle, or via
+//the self-kill message when a use is in flight)
+void CPopupBrowserDlg::kill()
+{
+	if (dead_) { return; }
+	dead_ = true;
+	gl_.callback.extract.pop(this);
+	if (popup_)
+	{
+		CPopupBrowserDlg* c = popup_;
+		popup_ = NULL;
+		c->kill();
+	}
+	if (use_ > 0) { pendingKill_ = true; return; }
+	destroyNow();
+}
+
+void CPopupBrowserDlg::destroyNow()
+{
+	if (::IsWindow(GetSafeHwnd())) { DestroyWindow(); }
+	delete this;
+}
+
+void CPopupBrowserDlg::release()
+{
+	if (--use_ == 0 && pendingKill_)
+	{
+		pendingKill_ = false;
+		if (!::PostMessageW(GetSafeHwnd(), WM_PCR_POPUPKILL, 0, 0))
+		{
+			destroyNow();	//window already gone; no frame can come back
+		}
+	}
+}
+
+LRESULT CPopupBrowserDlg::OnPcrKill(WPARAM, LPARAM)
+{
+	//posted by the last handler leaving; nothing on the stack refers to us
+	destroyNow();
+	return 0;
 }
 
 
@@ -504,9 +562,9 @@ void CPopupBrowserDlg::scrollIntoView(int res)
 {
 	if (target_)
 	{
-		CString anchor;
-		anchor.Format(L"res:%d", res);
-		target_->ScrollIntoViewId(anchor.GetString());
+		//[pcr-next] resolve through the main document's roll-over mapping
+		std::wstring anchor = target_->resolveResAnchor(res, std::wstring());
+		if (!anchor.empty()) { target_->ScrollIntoViewId(anchor.c_str()); }
 	}
 }
 
@@ -594,6 +652,7 @@ BEGIN_MESSAGE_MAP(CPopupBrowserDlg, CCustomDHtmlDialog)
 	ON_WM_LBUTTONDOWN()
 	ON_WM_LBUTTONUP()
 	ON_COMMAND(IDM_CONTEXT_CLOSE, &CPopupBrowserDlg::OnContextClose)
+	ON_MESSAGE(WM_PCR_POPUPKILL, &CPopupBrowserDlg::OnPcrKill)	//[pcr-marsh]
 END_MESSAGE_MAP()
 
 
@@ -602,6 +661,8 @@ END_MESSAGE_MAP()
 
 void CPopupBrowserDlg::OnCallbackExtract()
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return; }		//[pcr-marsh]
 	if (!this_.complete)
 	{
 		this_.callback = true;
@@ -659,6 +720,8 @@ void CPopupBrowserDlg::OnWebRecover()
 
 void CPopupBrowserDlg::OnDocumentComplete(const std::wstring& url)
 {
+	Use u(this);				//[pcr-marsh] LoadFromString pumps below
+	if (dead_) { return; }		//[pcr-marsh]
 	CCustomDHtmlDialog::OnDocumentComplete(url);
 
 	if (!this_.header)
@@ -707,6 +770,8 @@ HRESULT CPopupBrowserDlg::OnBrowserKey(MSG& msg)
 
 HRESULT CPopupBrowserDlg::OnBrowserContext(DWORD menuID, POINT* ppt, const PcrElement& el)
 {
+	Use u(this);					//[pcr-marsh] the menu is a modal pump
+	if (dead_) { return S_OK; }		//[pcr-marsh]
 	cancel(true);
 	HRESULT hr = utl::ContextMenu::show(this, menuID, ppt, el, 2, checkURL(), this_.url);
 	cancel(false);
@@ -814,11 +879,15 @@ void CPopupBrowserDlg::OnDestroy()
 
 BOOL CPopupBrowserDlg::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return TRUE; }	//[pcr-marsh]
 	return CCustomDHtmlDialog::OnMouseWheel(nFlags, zDelta, pt);
 }
 
 HRESULT CPopupBrowserDlg::OnAnchorMouseClick(const PcrElement& el)
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return S_OK; }	//[pcr-marsh]
 	if (!el.valid()) { return S_OK; }
 
 	bbs::URIConvert cnv;
@@ -860,6 +929,8 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseClick(const PcrElement& el)
 
 HRESULT CPopupBrowserDlg::OnAnchorMouseOut(const PcrElement& el)
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return S_OK; }	//[pcr-marsh]
 	el;	//[pcr-web] may be a bare out; cursor-based decision
 	//[pcr-web] nested popup hide (same rationale as CBrowserDlg)
 	if (popup_) { popup_->onMouseMove(); }
@@ -868,6 +939,8 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseOut(const PcrElement& el)
 
 HRESULT CPopupBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 {
+	Use u(this);				//[pcr-marsh]
+	if (dead_) { return S_OK; }	//[pcr-marsh]
 	if (this_.readOnly)
 	{
 		return S_OK;
@@ -892,6 +965,12 @@ HRESULT CPopupBrowserDlg::OnAnchorMouseOver(const PcrElement& el)
 
 void CPopupBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 {
+	if (dead_)	//[pcr-marsh] a dying popup answers no timers
+	{
+		KillTimer(TIMER_ID_POPUP);
+		KillTimer(TIMER_ID_WATCH);
+		return;
+	}
 	switch (nIDEvent)
 	{
 	case TIMER_ID_POPUP:

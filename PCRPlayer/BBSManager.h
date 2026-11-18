@@ -25,8 +25,9 @@ private:
 	boost::optional<std::vector<ThreadInfo>> subject_;
 
 	struct Dat {
-		Dat() : init(true) {}
+		Dat() : init(true), moved(false) {}
 		bool init;
+		bool moved; //[pcr-next] fresh dat came from an automatic roll-over move
 		std::vector<ResInfo> tmp;
 		std::vector<ResInfo> res;
 		std::unordered_map<std::wstring, std::vector<int>> id;
@@ -46,7 +47,7 @@ public:
 	bool init(const std::wstring& url, const std::wstring& shitaraba, const std::wstring& userAgent, const network::Proxy& proxy, int timeout);
 	void uninit();
 
-	bool change(const std::wstring& key);
+	bool change(const std::wstring& key, bool autoMove = false);
 
 	int loadSetting(const std::wstring& userAgent, const network::Proxy& proxy, int timeout, DWORD& code);
 	int loadSubject(const std::wstring& userAgent, const network::Proxy& proxy, int timeout, DWORD& code);
@@ -58,6 +59,7 @@ public:
 
 	bool getSubject(std::vector<ThreadInfo>& data);
 	bool getDat(std::vector<ResInfo>& data, bool& init);
+	bool getDat(std::vector<ResInfo>& data, bool& init, bool& moved); //[pcr-next]
 	bool getDat(std::vector<ResInfo>& data, int diff, int len);
 	bool getExtract(std::vector<ResInfo>& data);
 	bool getExtract(std::vector<ResInfo>& data, const std::wstring& text, bool convert);

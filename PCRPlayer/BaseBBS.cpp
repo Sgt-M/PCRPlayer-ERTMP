@@ -144,9 +144,10 @@ void BaseBBS::getInfo(BBSInfo& info)
 	info = bbs_;
 }
 
-bool BaseBBS::change(const std::wstring& key)
+bool BaseBBS::change(const std::wstring& key, bool autoMove)
 {
 	if (!valid_) { return false; }
+	movedNext_ = autoMove; //[pcr-next] consumed by the manager on the next full dat load
 
 	for (auto it = subject_.begin(); it != subject_.end(); ++it)
 	{
@@ -163,6 +164,13 @@ bool BaseBBS::change(const std::wstring& key)
 		}
 	}
 	return false;
+}
+
+bool BaseBBS::consumeMoved()
+{
+	bool m = movedNext_;
+	movedNext_ = false;
+	return m;
 }
 
 int BaseBBS::loadSetting(const std::wstring& userAgent, const network::Proxy& proxy, int timeout, DWORD& code)

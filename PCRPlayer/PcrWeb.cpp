@@ -440,7 +440,8 @@ LR"JS(
         cls: (typeof el.className === 'string' ? el.className : ''),
         href: href, text: t.slice(0, 2000),
         x: r.left, y: r.top, w: r.width, h: r.height,
-        dpr: window.devicePixelRatio || 1
+        dpr: window.devicePixelRatio || 1,
+        pres: (function (e2) { try { var r = e2.closest ? e2.closest('[id^="res:"]') : null; return r ? r.id : ''; } catch (x) { return ''; } })(el)
       });
     },
     hit: function (x, y) {
@@ -450,6 +451,7 @@ LR"JS(
       return p.infoOf(a || el);
     },
     anchor: function (id) { return p.infoOf(document.getElementById(id)); },
+    hasId: function (id) { return document.getElementById(id) ? 'ok' : ''; },
     scrollIntoView: function (id, smooth) { var el = document.getElementById(id); if (!el) { return 'err'; } if (smooth) { p.hold(); } else { p._prog = true; } el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); return 'ok'; },
 
     selectText: function () { var s = getSelection(); return s ? s.toString() : ''; },

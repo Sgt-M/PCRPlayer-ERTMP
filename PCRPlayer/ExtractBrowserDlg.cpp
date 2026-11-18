@@ -134,8 +134,13 @@ bool CExtractBrowserDlg::pageExtract()
 		{
 			if (id.size() > header.size())
 			{
-				++this_.count;
 				int res = wcstol(id.c_str() + header.size(), NULL, 10);
+				//[pcr-next] roll-over document: extract numbers are raw and
+				//only valid for the CURRENT thread; earlier threads' ids skip.
+				LONG base = this_.dhtml->getResBase();
+				if (res <= base) { continue; }
+				res -= (int)base;
+				++this_.count;
 				if (set.find(res) == set.end())
 				{
 					set.insert(res);
@@ -167,11 +172,11 @@ bool CExtractBrowserDlg::checkURL()
 
 void CExtractBrowserDlg::scrollIntoView(int res)
 {
-	CString anchor;
-	anchor.Format(L"res:%d", res);
+	//[pcr-next] resolve through the main document's roll-over mapping
 	if (this_.dhtml)
 	{
-		this_.dhtml->ScrollIntoViewId(anchor.GetString());
+		std::wstring anchor = this_.dhtml->resolveResAnchor(res, std::wstring());
+		if (!anchor.empty()) { this_.dhtml->ScrollIntoViewId(anchor.c_str()); }
 	}
 }
 

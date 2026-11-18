@@ -267,11 +267,44 @@ void CBrowserDlg::OnCallbackDat()
 
 	std::vector<bbs::ResInfo> dat;
 	bool init = true;
-	if (!gl_.bbs.getDat(dat, init)) { return; }
+	bool moved = false;
+	if (!gl_.bbs.getDat(dat, init, moved)) { return; }
 
 	if (init)
 	{// new load
 		StoreScroll();
+
+		//[pcr-next] automatic roll-over move: like the IE-era behavior keep the
+		//document and append the new thread below a separator. Requires an
+		//actually-changing thread URL and posts already on screen; when the
+		//separator write is refused fall back to the normal reload below.
+		if (moved && this_.complete && !this_.dat.empty() && !this_.url.empty())
+		{
+			std::wstring urlx;
+			if (gl_.bbs.getThreadURL(urlx) && this_.url != urlx && nextThreadSeparator(urlx))
+			{
+				this_.resHist.push_back(std::make_pair(this_.resBase, (LONG)this_.dat.size()));
+				this_.resBase += (LONG)this_.dat.size();
+				this_.url = urlx;
+				this_.reset = false;
+				this_.pos = 0;
+				this_.first = false;
+				this_.newres = !dat.empty();
+				this_.init = false;
+				RemoveClassName(L"new");
+				this_.dat.swap(dat);
+				if (createRes(gl_.value.detail.board.partial))
+				{
+					SetTimer(TIMER_ID_DAT, 0, NULL);
+				}
+				else
+				{
+					autoScroll(this_.newres);
+					ChangeFocus();
+				}
+				return;
+			}
+		}
 
 		this_.reset = false;
 		std::wstring url;
@@ -286,6 +319,11 @@ void CBrowserDlg::OnCallbackDat()
 				this_.url = url;
 			}
 		}
+
+		//[pcr-next] a full (re)load rewrites the document: the concatenated
+		//thread history and the display-number offset are gone.
+		this_.resHist.clear();
+		this_.resBase = 0;
 
 		this_.pos = 0;
 		bbs::BBSSkin skin(gl_.value.detail.skin.thread);
@@ -363,6 +401,70 @@ void CBrowserDlg::OnCallbackDat()
 	}
 }
 
+bool CBrowserDlg::nextThreadSeparator(const std::wstring& url)
+{
+	//[pcr-next] separator line shown where an automatic roll-over happened
+	std::wstring title;
+	gl_.bbs.getThreadTitle(title);
+	std::wstring esc, tesc;
+	for (size_t i = 0; i < url.size(); ++i)
+	{
+		if (url[i] == L'&') { esc += L"&amp;"; }
+		else if (url[i] == L'"') { esc += L"&quot;"; }
+		else { esc += url[i]; }
+	}
+	for (size_t i = 0; i < title.size(); ++i)
+	{
+		if (title[i] == L'&') { tesc += L"&amp;"; }
+		else if (title[i] == L'<') { tesc += L"&lt;"; }
+		else if (title[i] == L'>') { tesc += L"&gt;"; }
+		else { tesc += title[i]; }
+	}
+	std::wstring html = L"<div style=\"margin:10px 2px;padding:4px 6px;border-top:2px double #999;border-bottom:2px double #999;text-align:center;\"><b>\u25c6 \u6b21\u306e\u30b9\u30ec\u306b\u79fb\u52d5\uff1a<a href=\"" + esc + L"\">" + tesc + L"</a></b></div>\r\n";
+	return AppendDocument(html) ? true : false;
+}
+
+std::wstring CBrowserDlg::resolveResAnchor(int num, const std::wstring& parentDispId)
+{
+	if (num <= 0) { return std::wstring(); }
+	if (this_.resBase == 0)
+	{
+		CString anchor;
+		anchor.Format(L"res:%d", num);
+		return anchor.GetString();
+	}
+	//[pcr-next] concatenated roll-over document: pick a display ID that exists,
+	//preferring the thread the clicked post itself lives in (parent res id).
+	std::vector<std::pair<LONG, LONG> > hist = this_.resHist;
+	hist.push_back(std::make_pair(this_.resBase, (LONG)this_.dat.size()));
+	LONG parent = 0;
+	if (parentDispId.size() > 4) { parent = (LONG)wcstol(parentDispId.c_str() + 4, NULL, 10); }
+	if (parent > 0)
+	{
+		for (int t = (int)hist.size() - 1; t >= 0; --t)
+		{
+			LONG local = parent - hist[t].first;
+			if (local >= 1 && local <= hist[t].second)
+			{
+				CString cand;
+				cand.Format(L"res:%d", (int)(hist[t].first + num));
+				if (HasResId(cand.GetString())) { return cand.GetString(); }
+				break;
+			}
+		}
+	}
+	for (int t = (int)hist.size() - 1; t >= 0; --t)
+	{
+		if (num >= 1 && num <= hist[t].second)
+		{
+			CString cand;
+			cand.Format(L"res:%d", (int)(hist[t].first + num));
+			if (HasResId(cand.GetString())) { return cand.GetString(); }
+		}
+	}
+	return std::wstring();
+}
+
 void CBrowserDlg::OnTimer(UINT_PTR nIDEvent)
 {
 	switch (nIDEvent)
@@ -404,9 +506,9 @@ HRESULT CBrowserDlg::OnAnchorMouseClick(const PcrElement& el)
 	{
 		if (res.anchor.matched)
 		{
-			CString anchor;
-			anchor.Format(L"res:%d", res.anchor.value.first);
-			ScrollIntoViewId(anchor.GetString());
+			//[pcr-next] resolve against the concatenated roll-over document
+			std::wstring anchor = resolveResAnchor(res.anchor.value.first, el.pres);
+			if (!anchor.empty()) { ScrollIntoViewId(anchor.c_str()); }
 		}
 		else if (res.id.matched)
 		{

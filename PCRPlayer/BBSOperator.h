@@ -170,6 +170,7 @@ private:
 	utl::SyncOptional<std::vector<ResInfo> > dat_;
 	utl::SyncOptional<std::vector<ResInfo> > partial_;
 	utl::SyncOptional<bool> init_;
+	utl::SyncOptional<bool> moved_; //[pcr-next] dat came from an automatic roll-over move
 	utl::SyncOptional<std::vector<ResInfo> > extract_;
 	utl::SyncOptional<std::vector<ThreadInfo> > subject_;
 
@@ -238,6 +239,17 @@ public:
 		if (dat_.get(dat) && init_.get(init))
 		{
 			init_ = false;
+			return true;
+		}
+		return false;
+	}
+	//[pcr-next] roll-over continuation: moved tells the view to append
+	bool getDat(std::vector<ResInfo>& dat, bool& init, bool& moved)
+	{
+		if (dat_.get(dat) && init_.get(init) && moved_.get(moved))
+		{
+			init_ = false;
+			moved_ = false;
 			return true;
 		}
 		return false;
@@ -334,7 +346,7 @@ private:
 	void extractThread(int ref, int size, bool head);
 	void extractThread(const std::vector<int>& vec, int size, bool head);
 	bool subjectThread();
-	void changeThread(const std::wstring& key, const ReloadControl& ctrl);
+	void changeThread(const std::wstring& key, const ReloadControl& ctrl, bool autoMove); //[pcr-next]
 	void postThread(const std::wstring& name, const std::wstring& mail, const std::wstring& message);
 };
 

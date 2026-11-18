@@ -585,6 +585,7 @@ void CCustomDHtmlDialog::ParseElement(const std::wstring& json, PcrElement& el)
 	pcrweb::JsonGetStr(json, L"id", el.id);
 	pcrweb::JsonGetStr(json, L"cls", el.cls);
 	pcrweb::JsonGetStr(json, L"href", el.href);
+	pcrweb::JsonGetStr(json, L"pres", el.pres); //[pcr-next]
 	pcrweb::JsonGetStr(json, L"text", el.text);
 	double v = 0;
 	if (pcrweb::JsonGetNum(json, L"x", v)) el.x = v;
@@ -1034,6 +1035,22 @@ BOOL CCustomDHtmlDialog::ScrollIntoViewId(const std::wstring& id)
 {
 	//[pcr-web] smooth: IE animated scrollIntoView (res anchor jumps)
 	return EvalBoolOk(L"pcr.scrollIntoView(\"" + pcrweb::JsEscape(id) + L"\", 1)");
+}
+
+BOOL CCustomDHtmlDialog::HasResId(const std::wstring& id)
+{
+	//[pcr-next] existence probe for the roll-over continuation link resolution
+	return EvalBoolOk(L"pcr.hasId(\"" + pcrweb::JsEscape(id) + L"\")");
+}
+
+std::wstring CCustomDHtmlDialog::resolveResAnchor(int num, const std::wstring& parentDispId)
+{
+	//[pcr-next] default: plain numbering (no concatenated document)
+	(void)parentDispId;
+	if (num <= 0) { return std::wstring(); }
+	CString anchor;
+	anchor.Format(L"res:%d", num);
+	return anchor.GetString();
 }
 
 BOOL CCustomDHtmlDialog::IsTextArea(const CPoint& screen)

@@ -59,10 +59,10 @@ void BBSManager::uninit()
 	pos_.reset();
 }
 
-bool BBSManager::change(const std::wstring& key)
+bool BBSManager::change(const std::wstring& key, bool autoMove)
 {
 	boost::recursive_mutex::scoped_lock lock(mutex_.bbs);
-	if (bbs_ && *bbs_ && bbs_->change(key))
+	if (bbs_ && *bbs_ && bbs_->change(key, autoMove))
 	{
 		boost::recursive_mutex::scoped_lock lock(mutex_.value);
 		dat_.reset();
@@ -138,6 +138,7 @@ int BBSManager::loadDat(const std::wstring& userAgent, const network::Proxy& pro
 				{// ‰Šú‰»
 					dat_.emplace();
 					init = true;
+					dat_->moved = bbs_->consumeMoved(); //[pcr-next] roll-over continuation hint
 				}
 				else
 				{// V’…Á‹
@@ -345,6 +346,15 @@ bool BBSManager::getSubject(std::vector<ThreadInfo>& data)
 	boost::recursive_mutex::scoped_lock lock(mutex_.value);
 	if (!subject_) { return false; }
 	data = *subject_;
+	return true;
+}
+
+bool BBSManager::getDat(std::vector<ResInfo>& data, bool& init, bool& moved)
+{
+	if (!getDat(data, init)) { moved = false; return false; }
+	boost::recursive_mutex::scoped_lock lock(mutex_.value);
+	moved = dat_ ? dat_->moved : false;
+	if (dat_) { dat_->moved = false; }
 	return true;
 }
 
