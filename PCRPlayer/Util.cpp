@@ -893,7 +893,11 @@ BOOL getDesktopRectFromPoint(const POINT pt, MONITORINFO &mi)
 
 BOOL getDesktopRectFromRect(const RECT &rcFrom, MONITORINFO &mi)
 {
-	HMONITOR mon = ::MonitorFromRect(&rcFrom, MONITOR_DEFAULTTOPRIMARY);
+	//[pcr-fix] DEFAULTTOPRIMARY returns the PRIMARY monitor whenever the rect
+	//crosses a monitor seam (window fully outside it too) - horizontal snap
+	//then compared against the wrong work area = 'snaps sometimes' on
+	//multi-monitor. Nearest tracks the monitor the drag is actually on.
+	HMONITOR mon = ::MonitorFromRect(&rcFrom, MONITOR_DEFAULTTONEAREST);
 
 	if (mon != NULL)
 	{
@@ -909,7 +913,7 @@ BOOL getDesktopRectFromRect(const RECT &rcFrom, MONITORINFO &mi)
 
 BOOL getDesktopRectFromWindow(const HWND hWnd, MONITORINFO &mi)
 {
-	HMONITOR mon = ::MonitorFromWindow(hWnd, MONITOR_DEFAULTTOPRIMARY);
+	HMONITOR mon = ::MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST); //[pcr-fix] same seam bug as getDesktopRectFromRect
 
 	if (mon != NULL)
 	{
