@@ -85,6 +85,18 @@ static CPoint g_prevPt = {0, 0};
 static int g_dirX = 0;
 static int g_dirY = 0;
 
+//[pcr-fix] sticky magnet: once a snap engages during THIS drag, keep pinning
+//my edge to that same target edge while within its band, even if an opposite
+//magnet reports a smaller |delta|. Without this, two opposing bands move in
+//lockstep during a pull (measured: wL=-3/wR=-7 -> wL=-1/wR=-5...) and the
+//4px between them never closes (user: 'still overlaps by a few px').
+static int g_stickX = 0;   // 0 none, 1 my-left pinned, 2 my-right pinned
+static LONG g_stickXEdge = 0;
+static LONG g_stickXBand = 0;
+static int g_stickY = 0;   // 0 none, 1 my-top pinned, 2 my-bottom pinned
+static LONG g_stickYEdge = 0;
+static LONG g_stickYBand = 0;
+
 //[pcr-fix] screen-edge candidates as deltas (split per side so the caller can prefer the pull direction)
 static bool screenDeltaXL(const MONITORINFO& mi, const CRect& rc, LONG dist, LONG& d)
 {
@@ -143,6 +155,8 @@ void WindowSnap::OnEnterSizeMove(HWND hwnd)
 	g_prevPt = pt;
 	g_dirX = 0;
 	g_dirY = 0;
+	g_stickX = 0;
+	g_stickY = 0;
 }
 
 void WindowSnap::OnMoving(HWND hwnd, LPRECT pRect, bool screen, bool window, const SnapDistance& distance)
@@ -176,33 +190,94 @@ void WindowSnap::OnMoving(HWND hwnd, LPRECT pRect, bool screen, bool window, con
 
 		MONITORINFO mi;
 		const bool haveMi = screen && utl::getDesktopRectFromRect(rc, mi);
-		struct C1 { bool ok; LONG d; };
-		auto bestOf = [](std::initializer_list<C1> v) -> C1 {
-			C1 r = {false, 0};
-			for (std::initializer_list<C1>::iterator it = v.begin(); it != v.end(); ++it)
+		struct C1 { bool ok; LONG d; int side; LONG band; };
+
+		//X axis: honored stick first, else nearest-on-pull-side selection
+		if (g_stickX)
+		{
+			LONG d = (g_stickX == 1) ? (g_stickXEdge - rc.left) : (g_stickXEdge - rc.right);
+			if (abs(d) < g_stickXBand) { rc.OffsetRect(d, 0); }
+			else { g_stickX = 0; }
+		}
+		if (!g_stickX)
+		{
+			C1 sl = {false,0,1,0}, sr = {false,0,2,0}, wl = {false,0,1,0}, wr = {false,0,2,0};
+			if (haveMi) { sl.ok = screenDeltaXL(mi, rc, distance_.screen, sl.d); sr.ok = screenDeltaXR(mi, rc, distance_.screen, sr.d); sl.band = sr.band = distance_.screen; }
+			if (window) { wl.ok = findSnapDelta(hwnd, true, 1, rc, distance_.window, wl.d); wr.ok = findSnapDelta(hwnd, true, 2, rc, distance_.window, wr.d); wl.band = wr.band = distance_.window; }
+			auto bestOf = [](std::initializer_list<C1> v) -> C1 {
+				C1 r = {false, 0, 0, 0};
+				for (std::initializer_list<C1>::iterator it = v.begin(); it != v.end(); ++it)
+				{
+					if (it->ok && (!r.ok || abs(it->d) < abs(r.d))) { r = *it; }
+				}
+				return r;
+			};
+			C1 pick = {false,0,0,0};
+			if (g_dirX < 0) { pick = bestOf({sl, wl}); }
+			else if (g_dirX > 0) { pick = bestOf({sr, wr}); }
+			if (!pick.ok) { pick = bestOf({sl, wl, sr, wr}); }
+			if (pick.ok)
 			{
-				if (it->ok && (!r.ok || abs(it->d) < abs(r.d))) { r = *it; }
+				rc.OffsetRect(pick.d, 0);
+				g_stickX = pick.side;
+				g_stickXBand = pick.band;
+				g_stickXEdge = (pick.side == 1) ? rc.left : rc.right;
 			}
-			return r;
-		};
+			else { (void)0; }
+		}
 
-		C1 sl = {false,0}, sr = {false,0}, wl = {false,0}, wr = {false,0};
-		if (haveMi) { sl.ok = screenDeltaXL(mi, rc, distance_.screen, sl.d); sr.ok = screenDeltaXR(mi, rc, distance_.screen, sr.d); }
-		if (window) { wl.ok = findSnapDelta(hwnd, true, 1, rc, distance_.window, wl.d); wr.ok = findSnapDelta(hwnd, true, 2, rc, distance_.window, wr.d); }
-		C1 pick = {false,0};
-		if (g_dirX < 0) { pick = bestOf({sl, wl}); }
-		else if (g_dirX > 0) { pick = bestOf({sr, wr}); }
-		if (!pick.ok) { pick = bestOf({sl, wl, sr, wr}); }
-		if (pick.ok) { rc.OffsetRect(pick.d, 0); }
+		//Y axis: same
+		if (g_stickY)
+		{
+			LONG d = (g_stickY == 1) ? (g_stickYEdge - rc.top) : (g_stickYEdge - rc.bottom);
+			if (abs(d) < g_stickYBand) { rc.OffsetRect(0, d); }
+			else { g_stickY = 0; }
+		}
+		if (!g_stickY)
+		{
+			C1 st = {false,0,1,0}, sb2 = {false,0,2,0}, wt = {false,0,1,0}, wb = {false,0,2,0};
+			if (haveMi) { st.ok = screenDeltaYT(mi, rc, distance_.screen, st.d); sb2.ok = screenDeltaYB(mi, rc, distance_.screen, sb2.d); st.band = sb2.band = distance_.screen; }
+			if (window) { wt.ok = findSnapDelta(hwnd, false, 1, rc, distance_.window, wt.d); wb.ok = findSnapDelta(hwnd, false, 2, rc, distance_.window, wb.d); wt.band = wb.band = distance_.window; }
+			auto bestOf = [](std::initializer_list<C1> v) -> C1 {
+				C1 r = {false, 0, 0, 0};
+				for (std::initializer_list<C1>::iterator it = v.begin(); it != v.end(); ++it)
+				{
+					if (it->ok && (!r.ok || abs(it->d) < abs(r.d))) { r = *it; }
+				}
+				return r;
+			};
+			C1 pickY = {false,0,0,0};
+			if (g_dirY < 0) { pickY = bestOf({st, wt}); }
+			else if (g_dirY > 0) { pickY = bestOf({sb2, wb}); }
+			if (!pickY.ok) { pickY = bestOf({st, wt, sb2, wb}); }
+			if (pickY.ok)
+			{
+				rc.OffsetRect(0, pickY.d);
+				g_stickY = pickY.side;
+				g_stickYBand = pickY.band;
+				g_stickYEdge = (pickY.side == 1) ? rc.top : rc.bottom;
+			}
+		}
 
-		C1 st = {false,0}, sb2 = {false,0}, wt = {false,0}, wb = {false,0};
-		if (haveMi) { st.ok = screenDeltaYT(mi, rc, distance_.screen, st.d); sb2.ok = screenDeltaYB(mi, rc, distance_.screen, sb2.d); }
-		if (window) { wt.ok = findSnapDelta(hwnd, false, 1, rc, distance_.window, wt.d); wb.ok = findSnapDelta(hwnd, false, 2, rc, distance_.window, wb.d); }
-		C1 pickY = {false,0};
-		if (g_dirY < 0) { pickY = bestOf({st, wt}); }
-		else if (g_dirY > 0) { pickY = bestOf({sb2, wb}); }
-		if (!pickY.ok) { pickY = bestOf({st, wt, sb2, wb}); }
-		if (pickY.ok) { rc.OffsetRect(0, pickY.d); }
+		//keep diag block's expected vars alive with stub values when stick held
+		C1 sl = {false,0,1,0}, sr = {false,0,2,0}, wl = {false,0,1,0}, wr = {false,0,2,0};
+		C1 st = {false,0,1,0}, sb2 = {false,0,2,0}, wt = {false,0,1,0}, wb = {false,0,2,0};
+		C1 pick = {g_stickX != 0, 0, g_stickX, g_stickXBand};
+		C1 pickY = {g_stickY != 0, 0, g_stickY, g_stickYBand};
+
+		//[pcr-diag] snap decision trace (only on change): 9999 = no candidate in band
+		{
+			auto v = [](C1 c) -> LONG { return c.ok ? c.d : 9999; };
+			static LONG lastSig = 0x7fffffff;
+			LONG sig = (g_dirX + 2) * 1000000L + (g_dirY + 2) * 100000L
+				+ (abs(v(pick)) % 100) * 100L + (abs(v(pickY)) % 100);
+			if (sig != lastSig)
+			{
+				lastSig = sig;
+				pcrweb::Log(L"snap cand X dir=%d [sL=%d sR=%d wL=%d wR=%d]->%d", g_dirX, v(sl), v(sr), v(wl), v(wr), v(pick));
+				pcrweb::Log(L"snap cand Y dir=%d [sT=%d sB=%d wT=%d wB=%d]->%d", g_dirY, v(st), v(sb2), v(wt), v(wb), v(pickY));
+			}
+		}
 	}
 
 	//-------------------
