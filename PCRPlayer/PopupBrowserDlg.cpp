@@ -477,7 +477,13 @@ void CPopupBrowserDlg::showWindow(bool show)
 			ChangeFocus();
 		}
 	}
-}
+
+	//[pcr-fix] watchdog lifetime follows actual visibility, always: a second
+	//showWindow(true) while already visible used to kill the armed watchdog and
+	//never re-arm it (the delayed-show path), leaving the popup stuck again.
+	if (IsWindowVisible()) { SetTimer(TIMER_ID_WATCH, 300, NULL); }
+	else { KillTimer(TIMER_ID_WATCH); }
+	}
 
 void CPopupBrowserDlg::delayShowWindow()
 {
