@@ -43,7 +43,7 @@ void WindowSnap::OnMoving(HWND hwnd, LPRECT pRect, bool screen, bool window, con
 	//gl_.addLog(L"diff l:%d t:%d r:%d b:%d", diff_.left, diff_.top, diff_.right, diff_.bottom);
 
 	rc.DeflateRect(diff_);
-	CRect org(rc);
+	//[pcr-fix] window snap measures against re-anchored rc (was org-measured but rc-applied -> anchor delta remained as few-px overlap)
 
 	//-------------------
 
@@ -62,8 +62,8 @@ void WindowSnap::OnMoving(HWND hwnd, LPRECT pRect, bool screen, bool window, con
 	}
 	else if (!screen && window)
 	{
-		windowSnapX(hwnd, org, rc);
-		windowSnapY(hwnd, org, rc);
+		windowSnapX(hwnd, rc, rc);
+		windowSnapY(hwnd, rc, rc);
 	}
 	else
 	{
@@ -73,13 +73,13 @@ void WindowSnap::OnMoving(HWND hwnd, LPRECT pRect, bool screen, bool window, con
 			//gl_.addLog(L"from l:%d t:%d r:%d b:%d", rc.left, rc.top, rc.right, rc.bottom);
 			//gl_.addLog(L"work l:%d t:%d r:%d b:%d", mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
 			//gl_.addLog(L"moni l:%d t:%d r:%d b:%d", mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
-			if (!screenSnapX(hwnd, mi, rc)) { windowSnapX(hwnd, org, rc); }
-			if (!screenSnapY(hwnd, mi, rc)) { windowSnapY(hwnd, org, rc); }
+			if (!screenSnapX(hwnd, mi, rc)) { windowSnapX(hwnd, rc, rc); }
+			if (!screenSnapY(hwnd, mi, rc)) { windowSnapY(hwnd, rc, rc); }
 		}
 		else
 		{
-			windowSnapX(hwnd, org, rc);
-			windowSnapY(hwnd, org, rc);
+			windowSnapX(hwnd, rc, rc);
+			windowSnapY(hwnd, rc, rc);
 		}
 	}
 
