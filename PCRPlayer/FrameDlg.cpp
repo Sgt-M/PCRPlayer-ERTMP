@@ -49,6 +49,7 @@ BEGIN_MESSAGE_MAP(CFrameDlg, CDialog)
 	ON_WM_DESTROY()
 	ON_WM_SIZE()
 	ON_WM_ERASEBKGND()
+	ON_WM_SETCURSOR()
 	ON_WM_PAINT()
 	ON_MESSAGE(WM_GRAPH_NOTIFY, &CFrameDlg::OnGraphNotify)
 	ON_WM_RBUTTONDOWN()
@@ -104,6 +105,18 @@ BOOL CFrameDlg::OnEraseBkgnd(CDC* pDC)
 {
 	return TRUE;
 	//return CDialog::OnEraseBkgnd(pDC);
+}
+
+//[pcr-fix] the window-frame edge in CMainDlg::OnMouseMove sets IDC_SIZE* by
+//polling, but entering the video pane delivers no further mousemove there and
+//this dialog class carries no cursor, so the default WM_SETCURSOR chain left
+//the sizing shape stuck on screen (cosmetic). Set the arrow explicitly.
+//Fullscreen cursor-hiding is unaffected: ShowCursor(FALSE) counts, SetCursor
+//does not reveal it.
+BOOL CFrameDlg::OnSetCursor(CWnd* pWnd, UINT nHitTest, UINT message)
+{
+	::SetCursor(LoadCursor(NULL, IDC_ARROW));
+	return TRUE;
 }
 
 
