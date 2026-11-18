@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <mutex>   //[pcr-marsh] bridge payload lists
 
 // context menu kinds (former idocidl CONTEXT_MENU_* values)
 enum {
@@ -28,6 +29,8 @@ enum {
 #define WM_PCR_DOC        (WM_APP + 41)   // document write finished -> OnDocumentComplete
 #define WM_PCR_FATAL      (WM_APP + 42)   //[pcr-hard] webview browser process died -> user notice
 #define WM_PCR_ENVSTRM    (WM_APP + 42)   // [pcr-marsh] marshaled env stream -> UI thread
+#define WM_PCR_ANCHOR     (WM_APP + 43)   // [pcr-marsh] bridge anchor event -> UI thread; lParam = PcrElement* (queue-owned)
+#define WM_PCR_CTX        (WM_APP + 44)   // [pcr-marsh] context menu request -> UI thread; lParam = PcrCtxReq* (queue-owned)
 
 #include <docobj.h>   // OLECMDID_*
 
@@ -45,6 +48,13 @@ struct PcrElement {
 	PcrElement() : x(0), y(0), w(0), h(0), dpr(1.0) {}
 	bool valid() const { return !tag.empty(); }
 	operator bool() const { return valid(); }
+};
+
+//[pcr-marsh] context-menu request payload (posted to the UI thread)
+struct PcrCtxReq {
+	DWORD menuID;
+	POINT pt;
+	PcrElement el;
 };
 
 class CCustomDHtmlDialog : public CDialog
@@ -160,6 +170,18 @@ protected:
 	afx_msg LRESULT OnBrowserKeyMsg(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnDocMsg(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnPcrFatal(WPARAM wParam, LPARAM lParam); //[pcr-hard]
+	//[pcr-marsh] bridge handler marshaling (click/over/out + context menu):
+	//the popup dialogs are deleted by the UI thread with no locking, so the
+	//web-thread bridge dispatch was a use-after-free. These entries run the
+	//virtuals on the dialog's UI thread; payloads are owned by the queue and
+	//purged in OnDestroy when the window dies before dispatch.
+	afx_msg LRESULT OnPcrAnchor(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnPcrCtx(WPARAM wParam, LPARAM lParam);
+	void PostAnchor(int kind, const PcrElement& el);   //0=click 1=over 2=out
+	void PostCtx(DWORD menuID, POINT pt, const PcrElement& el);
+	std::mutex bridgeMtx_;                 //[pcr-marsh] guards the pending lists
+	std::vector<PcrElement*> anchorPending_; //[pcr-marsh]
+	std::vector<PcrCtxReq*> ctxPending_;     //[pcr-marsh]
 	void SpawnController(ICoreWebView2Environment* env);
 
 	void StartCreate();

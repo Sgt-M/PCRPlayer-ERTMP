@@ -9,6 +9,7 @@
 
 #include <wrl/client.h>
 #include <wrl/implements.h>
+#include <algorithm>   //[pcr-marsh] std::find in payload lists
 
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
@@ -384,7 +385,7 @@ void CCustomDHtmlDialog::WireEvents()
 						}
 					}
 
-					OnBrowserContext(menuID, &pt, el);
+					PostCtx(menuID, pt, el);	//[pcr-marsh] UI-thread dispatch
 					return S_OK;
 				}).Get(), &tokCtx_);
 	}
@@ -461,6 +462,8 @@ BEGIN_MESSAGE_MAP(CCustomDHtmlDialog, CDialog)
 	ON_MESSAGE(WM_PCR_BROWSERKEY, &CCustomDHtmlDialog::OnBrowserKeyMsg)
 	ON_MESSAGE(WM_PCR_DOC, &CCustomDHtmlDialog::OnDocMsg)
 	ON_MESSAGE(WM_PCR_FATAL, &CCustomDHtmlDialog::OnPcrFatal)  //[pcr-hard]
+	ON_MESSAGE(WM_PCR_ANCHOR, &CCustomDHtmlDialog::OnPcrAnchor) //[pcr-marsh]
+	ON_MESSAGE(WM_PCR_CTX, &CCustomDHtmlDialog::OnPcrCtx)       //[pcr-marsh]
 	//[pcr-t3] WM_PCR_ENVSTRM hop removed (controller now spawns inside env cb)
 END_MESSAGE_MAP()
 
@@ -515,6 +518,76 @@ afx_msg LRESULT CCustomDHtmlDialog::OnPcrFatal(WPARAM, LPARAM)
 	return 0;
 }
 
+//[pcr-marsh] bridge events used to run handlers on the WebView2 web thread
+//while the UI thread deleted popup dialogs without locking ("click an anchor
+//inside a popup" crash: garbage-this small memcpy). All bridge-driven
+//handlers now hop to the dialog's UI thread through posted messages.
+void CCustomDHtmlDialog::PostAnchor(int kind, const PcrElement& el)
+{
+	PcrElement* p = new PcrElement(el);
+	if (!::PostMessageW(GetSafeHwnd(), WM_PCR_ANCHOR, (WPARAM)kind, (LPARAM)p))
+	{
+		delete p; // window already gone
+		return;
+	}
+	std::lock_guard<std::mutex> lock(bridgeMtx_);
+	anchorPending_.push_back(p);
+}
+
+void CCustomDHtmlDialog::PostCtx(DWORD menuID, POINT pt, const PcrElement& el)
+{
+	PcrCtxReq* p = new PcrCtxReq();
+	p->menuID = menuID;
+	p->pt = pt;
+	p->el = el;
+	if (!::PostMessageW(GetSafeHwnd(), WM_PCR_CTX, 0, (LPARAM)p))
+	{
+		delete p;
+		return;
+	}
+	std::lock_guard<std::mutex> lock(bridgeMtx_);
+	ctxPending_.push_back(p);
+}
+
+LRESULT CCustomDHtmlDialog::OnPcrAnchor(WPARAM wParam, LPARAM lParam)
+{
+	PcrElement* p = (PcrElement*)lParam;
+	{
+		std::lock_guard<std::mutex> lock(bridgeMtx_);
+		std::vector<PcrElement*>::iterator it = std::find(anchorPending_.begin(), anchorPending_.end(), p);
+		if (it != anchorPending_.end()) { anchorPending_.erase(it); }
+		else { p = NULL; } //purged by OnDestroy while this message was still queued
+	}
+	if (p)
+	{
+		switch ((int)wParam)
+		{
+		case 0: OnAnchorMouseClick(*p); break;
+		case 1: OnAnchorMouseOver(*p); break;
+		default: OnAnchorMouseOut(*p); break;
+		}
+		delete p;
+	}
+	return 0;
+}
+
+LRESULT CCustomDHtmlDialog::OnPcrCtx(WPARAM, LPARAM lParam)
+{
+	PcrCtxReq* p = (PcrCtxReq*)lParam;
+	{
+		std::lock_guard<std::mutex> lock(bridgeMtx_);
+		std::vector<PcrCtxReq*>::iterator it = std::find(ctxPending_.begin(), ctxPending_.end(), p);
+		if (it != ctxPending_.end()) { ctxPending_.erase(it); }
+		else { p = NULL; }
+	}
+	if (p)
+	{
+		OnBrowserContext(p->menuID, &p->pt, p->el);
+		delete p;
+	}
+	return 0;
+}
+
 void CCustomDHtmlDialog::DispatchWebMessage(const std::wstring& json)
 {
 	std::wstring body = json;
@@ -558,7 +631,7 @@ void CCustomDHtmlDialog::DispatchWebMessage(const std::wstring& json)
 			std::wstring sel;
 			if (GetSelectedText(sel) && !sel.empty()) { menuID = PCRMENU_TEXTSELECT; }
 		}
-		OnBrowserContext(menuID, &sp, el);
+		PostCtx(menuID, sp, el);	//[pcr-marsh] UI-thread dispatch
 		return;
 	}
 
@@ -569,13 +642,13 @@ void CCustomDHtmlDialog::DispatchWebMessage(const std::wstring& json)
 	//IE polled it on every mousemove regardless of hover target.
 	if (e == L"out")
 	{
-		OnAnchorMouseOut(el);
+		PostAnchor(2, el);	//[pcr-marsh] UI-thread dispatch
 		return;
 	}
 	if (!el.valid()) { return; }
 
-	if (e == L"click")       { OnAnchorMouseClick(el); }
-	else if (e == L"over")   { OnAnchorMouseOver(el); }
+	if (e == L"click")       { PostAnchor(0, el); }	//[pcr-marsh] UI-thread dispatch
+	else if (e == L"over")   { PostAnchor(1, el); }	//[pcr-marsh] UI-thread dispatch
 }
 
 void CCustomDHtmlDialog::ParseElement(const std::wstring& json, PcrElement& el)
@@ -655,6 +728,14 @@ void CCustomDHtmlDialog::OnSize(UINT nType, int cx, int cy)
 void CCustomDHtmlDialog::OnDestroy()
 {
 	::KillTimer(GetSafeHwnd(), PCR_TIMER_ENV);
+	//[pcr-marsh] drop bridge payloads whose window died before dispatch
+	{
+		std::lock_guard<std::mutex> lock(bridgeMtx_);
+		for (size_t i = 0; i < anchorPending_.size(); ++i) { delete anchorPending_[i]; }
+		anchorPending_.clear();
+		for (size_t i = 0; i < ctxPending_.size(); ++i) { delete ctxPending_[i]; }
+		ctxPending_.clear();
+	}
 	//[pcr-marsh] teardown on the owning apartment; members cleared now so no
 	//UI path touches them again (the posted task keeps its own refs).
 	ICoreWebView2* wv = webview_;
