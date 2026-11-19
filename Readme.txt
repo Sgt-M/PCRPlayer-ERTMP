@@ -5,7 +5,8 @@ HEVCとAV1の映像を想定しています。
 デコーダーはLAV Filtersを使うことを推奨します。設定の詳細設定→デコーダ→優先して使用するビデオデコーダの欄で「LAV Video Decoder」を追加してください。オーディオデコーダは好きにして。
 PCRPlayer起動時にMPC VRやLAV Filtersがインストールされていない場合に同梱されているものをDSFilterとして登録して利用できるようにします。別にインストールしてある場合はそちらを使います。
 
-
+元となったPCRPlayerv0.27のダウンロード元
+http://pecatv.s25.xrea.com/
 
 Visual Studio Community 2026 / Visual C++ 2015 で開発しています ※ほぼAI丸投げ
 
