@@ -40,12 +40,11 @@ PeerCastStation が 9.0.0.0 で Enhanced RTMP 配信に対応したので、既�
 | `RegisterFilters.bat` | 同梱 LAV / MPC VR の HKCU 登録を再有効化（ダブルクリック） |
 | `UnregisterFilters.bat` | 同梱 LAV / MPC VR の HKCU 登録を解除し自動登録を無効化。別途インストーラで導入する場合に実行 |
 | `VSR_*.reg` | NVIDIA RTX VSR 連動の切り替え（D3D11 copy back 強制のオン/オフ）。インポート後にプレイヤーを再起動 |
-| `PcrDiag64.exe` / `PcrDiag.exe` | フィルタが認識されないとき実行すると、同じフォルダに `PcrDiag.txt` が生成されます（不具合報告時に添付してください） |
 | `filters/` `skin/` | 同梱フィルタ（LAV / MPC VR）と BBS スキン |
 
 ## トラブルシュート
 
-- **映像が出ない / フィルタが効かない** → `PcrDiag64.exe` を実行して生成される `PcrDiag.txt` を添付して報告してください
+- **映像が出ない / フィルタが効かない** → `RegisterFilters.bat` を実行してプレイヤーを再起動しても改善しなければ、現象と環境（配信方式・レンダラ設定）を添えて報告してください
 - **HKCU 登録フィルタは DirectShow の列挙ツールには見えません（仕様）**。プレイヤーからは認識されます
 - **RTX VSR を使いたい** → レンダラに MPC VR を選択後、レンダラから使用する設定をして使用できます。。既定（DXVA2 copy back）で動作します。D3D11 強制が必要になったら `VSR_D3D11copyback_オプトイン.reg` をインポート
 
