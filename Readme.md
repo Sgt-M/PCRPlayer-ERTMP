@@ -30,7 +30,7 @@ PeerCastStation が 9.0.0.0 で Enhanced RTMP 配信に対応したので、既�
 2. PeCaRecorderやPecaListから引数をつけて再生
 3. 初回は同梱の LAV Filters / MPC Video Renderer が自動登録されていればそれで動きます
    - 手動で登録し直したい場合: `RegisterFilters.bat` をダブルクリック
-   - 別途インストーラで LAV / MPC VR を入れる場合: `UnregisterFilters.bat` を実行
+   - 別途インストーラで LAV / MPC VR を入れる場合は: `UnregisterFilters.bat` を実行してからインストールしてください
 
 ## リリース zip 同梱ファイルの説明
 
@@ -47,7 +47,7 @@ PeerCastStation が 9.0.0.0 で Enhanced RTMP 配信に対応したので、既�
 
 - **映像が出ない / フィルタが効かない** → `PcrDiag64.exe` を実行して生成される `PcrDiag.txt` を添付して報告してください
 - **HKCU 登録フィルタは DirectShow の列挙ツールには見えません（仕様）**。プレイヤーからは認識されます
-- **RTX VSR を使いたい** → レンダラに MPC VR を選択。既定（DXVA2 copy back）で動作します。D3D11 強制が必要になったら `VSR_D3D11copyback_オプトイン.reg` をインポート
+- **RTX VSR を使いたい** → レンダラに MPC VR を選択後、レンダラから使用する設定をして使用できます。。既定（DXVA2 copy back）で動作します。D3D11 強制が必要になったら `VSR_D3D11copyback_オプトイン.reg` をインポート
 
 ## ビルド
 
