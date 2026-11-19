@@ -82,7 +82,7 @@ Visual Studio Community 2026 / Visual C++ 2015 で開発しています ※ほ�
 ## ライセンス・クレジット
 
 - 本リポジトリ: **GPL-3.0**（[LICENSE](LICENSE)）
-- 元となった [PCRPlayer v0.27](http://pecatv.s25.xrea.com/)
+- 元となったPCRPlayerのソース [PCRPlayer v0.27](http://pecatv.s25.xrea.com/)
 - リリースファイルには以下のバイナリが含まれています
   - [MPC Video Renderer](https://github.com/Aleksoid1978/VideoRenderer)（GPL3.0）
   - [LAV Filters](https://github.com/Nevcairiel/LAVFilters)（GPL2.0）
