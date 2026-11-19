@@ -20,14 +20,14 @@ PeerCastStation が 9.0.0.0 で Enhanced RTMP 配信に対応したので、既�
 ## ダウンロード
 
 - 最新リリース: **[Latest Release](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/latest)**
-- zip を解凍して `PCRPlayer64.exe`（64bit）または `PCRPlayer.exe`（32bit）を実行するだけです
+- zip を解凍して `PCRPlayer64.exe`（64bit）または `PCRPlayer.exe`（32bit）を実行するだけです。64bit版を仕様を推奨
 
 > WebView2（Edge）ランタイムが必要です。ローダは静的リンクのため DLL の同梱は不要です。
 
 ## クイックスタート
 
 1. リリースの zip を任意のフォルダに**展開する**（インストール型ではありません）
-2. `PCRPlayer64.exe` を実行し、Peercast の URL / チャンネルを指定して再生
+2. PeCaRecorderやPecaListから引数をつけて再生
 3. 初回は同梱の LAV Filters / MPC Video Renderer が自動登録されていればそれで動きます
    - 手動で登録し直したい場合: `RegisterFilters.bat` をダブルクリック
    - 別途インストーラで LAV / MPC VR を入れる場合: `UnregisterFilters.bat` を実行
