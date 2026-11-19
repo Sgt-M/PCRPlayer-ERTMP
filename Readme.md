@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/Sgt-M/PCRPlayer-ERTMP)](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x86%20%2F%20x64-lightgrey)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/github/license/Sgt-M/PCRPlayer-ERTMP)](LICENSE)
 ![Enhanced RTMP](https://img.shields.io/badge/Enhanced%20RTMP%20v1-HEVC%20%2F%20AV1-orange)
 
 PeerCast / PeerCastStation の配信を見るための Windows 用プレイヤーです。
@@ -82,7 +82,7 @@ Visual Studio Community 2026 / Visual C++ 2015 で開発しています ※ほ�
 
 ## ライセンス・クレジット
 
-- 本リポジトリ: **MIT License**（[LICENSE](LICENSE)）
+- 本リポジトリ: **GPL-3.0**（[LICENSE](LICENSE)）
 - 元となった [PCRPlayer v0.27](http://pecatv.s25.xrea.com/)
 - リリースファイルには以下のバイナリが含まれています
   - [MPC Video Renderer](https://github.com/Aleksoid1978/VideoRenderer)（GPL3.0）
