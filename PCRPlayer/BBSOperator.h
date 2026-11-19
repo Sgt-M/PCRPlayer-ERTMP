@@ -230,7 +230,7 @@ public:
 	bool extract(int ref, int size = 0, bool head = true);
 	bool extract(const std::vector<int>& vec, int size = 0, bool head = true);
 	bool subject(); // 板一覧更新
-	bool change(const std::wstring& key); // スレッド変更と読み込み
+	bool change(const std::wstring& key, bool autoMove); //[pcr-fix] autoMove=automatic roll-over move // スレッド変更と読み込み
 	bool post(const std::wstring& name, const std::wstring& mail, const std::wstring& message);
 
 public:

@@ -252,13 +252,13 @@ bool BBSOperator::subject()
 	return true;
 }
 
-bool BBSOperator::change(const std::wstring& key)
+bool BBSOperator::change(const std::wstring& key, bool autoMove)
 {
 	thread_.change.timed_join(0);
 	if (thread_.change.joinable()) { return false; }
 
 	ReloadControl ctrl(cfg_.func([](const BoardControl& cfg) { return cfg.reload; }), true, false, false);
-	boost::thread thr(&BBSOperator::changeThread, this, key, ctrl, true); //[pcr-next] operator::change = automatic roll-over move
+	boost::thread thr(&BBSOperator::changeThread, this, key, ctrl, autoMove); //[pcr-next] autoMove: auto roll-over=true / manual select=false
 	thread_.change.swap(thr);
 	return true;
 }
@@ -724,12 +724,47 @@ void BBSOperator::datThread(const ReloadControl& ctrl)
 					callback_.update.get()(UPDATE_COUNTER);
 				}
 
-				while (true)
+				//[pcr-fix] 業とバーホバーポップアンの非表示処理(popup(false))は
+				// show.browser 設定によって setBlock(true) を呼ぶため、内蔵ブラウザを
+				// 表示中でも更新ブロックに入り得る。そした場合、この後の loadDat 直後に
+				// 行われる上限検知(次スレ移動)とえば F5 等の操作をしないと
+				// 永遠に評価されない。ブロック中でも更新間隔ごとに
+				// 次スレ移動だけは再試行する。
 				{
-					if (!block_.get()) { break; }
+					int rollover = 0;
+					int wait_ms = DEFAULT_BBS_INTERVAL;
+					cfg_.apply([&](const BoardControl& cfg){ wait_ms = cfg.interval; });
+					if (wait_ms < 1) { wait_ms = DEFAULT_BBS_INTERVAL; }
+					wait_ms *= 1000;
 
-					try { boost::this_thread::sleep(boost::posix_time::milliseconds(1)); }
-					catch (...) { goto exit_loop; }
+					while (true)
+					{
+						if (!block_.get()) { break; }
+
+						if ((ctrl.move || flag) && cfg_.func([](const BoardControl& cfg) { return cfg.move; }) && bbs_.isStop())
+						{
+							if (++rollover >= wait_ms)
+							{
+								rollover = 0;
+								if (subjectThread())
+								{
+									ThreadInfo info;
+									if (getFastest(info))
+									{
+										change(info.key, true); //[pcr-next] automatic roll-over (blocked)
+										return;
+									}
+								}
+							}
+						}
+						else
+						{
+							rollover = 0;
+						}
+
+						try { boost::this_thread::sleep(boost::posix_time::milliseconds(1)); }
+						catch (...) { goto exit_loop; }
+					}
 				}
 			}
 		}
@@ -824,7 +859,7 @@ void BBSOperator::datThread(const ReloadControl& ctrl)
 						counter_.clear();
 						callback_.update.get()(UPDATE_COUNTER);
 						callback_.update.get()(UPDATE_DELAY_STATUS);
-						change(info.key);
+						change(info.key, true); //[pcr-next] automatic roll-over
 						return;
 					}
 				}

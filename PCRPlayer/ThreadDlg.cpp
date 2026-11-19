@@ -505,7 +505,7 @@ void CThreadDlg::OnNMClickList(NMHDR *pNMHDR, LRESULT *pResult)
 	if (i >= 0)
 	{
 		try {
-			gl_.bbs.change(subject_.at(i).key);
+			gl_.bbs.change(subject_.at(i).key, false); //[pcr-next] manual select = no continuation
 			if (cfg_.close)
 			{
 				if (pResult) { *pResult = 0; }
