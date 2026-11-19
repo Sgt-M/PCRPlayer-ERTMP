@@ -19,7 +19,7 @@ PeerCastStation が 9.0.0.0 で Enhanced RTMP 配信に対応したので、既�
 
 ## ダウンロード
 
-- 最新リリース: **[Latest Release](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/latest)**（現在 v0.3.8）
+- 最新リリース: **[Latest Release](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/latest)**
 - zip を解凍して `PCRPlayer64.exe`（64bit）または `PCRPlayer.exe`（32bit）を実行するだけです
 
 > WebView2（Edge）ランタイムが必要です。ローダは静的リンクのため DLL の同梱は不要です。
