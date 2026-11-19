@@ -3,7 +3,6 @@
 [![Release](https://img.shields.io/github/v/release/Sgt-M/PCRPlayer-ERTMP)](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x86%20%2F%20x64-lightgrey)
 [![License](https://img.shields.io/github/license/Sgt-M/PCRPlayer-ERTMP)](LICENSE)
-![Enhanced RTMP](https://img.shields.io/badge/Enhanced%20RTMP%20v1-HEVC%20%2F%20AV1-orange)
 
 PeerCast / PeerCastStation の配信を見るための Windows 用プレイヤーです。
 PeerCastStation が 9.0.0.0 で Enhanced RTMP 配信に対応したので、既存の PCRPlayer を Enhanced RTMP（今のところ v1）に対応させたものです。HEVC と AV1 の映像を想定しています。
