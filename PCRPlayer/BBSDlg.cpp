@@ -453,7 +453,14 @@ BOOL CBBSDlg::PreTranslateMessage(MSG* pMsg)
 				case sl::BoardConfig::EDIT_SHORTCUT_ALT_ENTER: vkey = VK_MENU; break;
 				}
 				
-				if (GetAsyncKeyState(vkey) & 0x8000)
+				//[pcr-fix] GetAsyncKeyState reads the PHYSICAL state at the moment
+				//of this check: when the user releases Shift before the (possibly
+				//delayed: Eval pumps / bridge polling) Enter keydown is processed,
+				//a deliberate Shift+Enter silently became a plain Enter = newline.
+				//GetKeyState is the queue-synchronized state - the Shift keyup
+				//sits behind this Enter keydown in the queue, so the press at
+				//typing time is preserved no matter how late we run.
+				if (GetKeyState(vkey) & 0x8000)
 				{
 					OnBnClickedBtnWrite();
 					return TRUE;
