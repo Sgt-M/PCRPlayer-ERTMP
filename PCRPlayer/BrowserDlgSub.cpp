@@ -14,6 +14,7 @@ bool CBrowserDlg::getStatus(std::wstring& text)
 
 bool CBrowserDlg::createRes(int size)
 {
+
 	if (this_.dat.size() <= this_.pos)
 	{
 		return false;
@@ -71,7 +72,17 @@ bool CBrowserDlg::createRes(int size)
 	if (!html.empty())
 	{
 		//[pcr-web] former doc2->write
-		AppendDocument(html);
+		//[pcr-fix] pcr.append can be refused by the Eval reentry guard while
+		//the auto-scroll crawl (scrollBy/scroll evals, several per second)
+		//holds the wait, and the refusal used to be ignored -> the posts were
+		//counted as drawn (pos already advanced) and silently vanished from
+		//the document: exactly the reported res gaps (741/756/798/822/823...).
+		//Rewind the cursor so the next TIMER_ID_DAT tick redraws them.
+		if (!AppendDocument(html) && count > 0)
+		{
+			this_.pos -= count;
+			pcrweb::Log(L"[pcr-bbs] append refused, rewind pos by %d", count);
+		}
 	}
 
 

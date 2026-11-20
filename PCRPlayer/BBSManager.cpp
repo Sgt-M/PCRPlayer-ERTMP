@@ -148,7 +148,34 @@ int BBSManager::loadDat(const std::wstring& userAgent, const network::Proxy& pro
 						it->latest = false;
 					}
 				}
-				dat_->tmp = tmp;
+				//[pcr-fix] tmp is a single slot merged later by prepareDat(), which runs
+				// asynchronously via create()/createThread (and create() is skipped while
+				// one is pending). A fast board could overwrite tmp with the next batch
+				// before prepareDat merged the previous one -> res silently lost and the
+				// view shows number gaps until a full reload. Accumulate the incremental
+				// batches instead, de-duplicated by res.number (BaseBBS re-reads from
+				// res.size()+1 so batches may overlap).
+				if (pos == 0)
+				{
+					dat_->tmp = tmp;
+				}
+				else
+				{
+					for (auto nt = tmp.begin(); nt != tmp.end(); ++nt)
+					{
+						bool found = false;
+						for (auto st = dat_->tmp.begin(); st != dat_->tmp.end(); ++st)
+						{
+							if (st->number == nt->number)
+							{
+								*st = *nt;
+								found = true;
+								break;
+							}
+						}
+						if (!found) { dat_->tmp.push_back(*nt); }
+					}
+				}
 			}
 
 			if (init)

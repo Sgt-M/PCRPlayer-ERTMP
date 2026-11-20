@@ -140,6 +140,7 @@ protected:
 
 		void clear() { dat.clear(); size = 0; }
 	} raw_;
+	std::vector<char> tail_; // [pcr-fix] verified dat tail bytes for resume check
 
 	struct Regex {
 		boost::xpressive::wsregex compile(const std::wstring& text, boost::xpressive::regex_constants::syntax_option_type flag = boost::xpressive::regex_constants::ECMAScript)

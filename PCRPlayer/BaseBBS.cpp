@@ -272,6 +272,7 @@ int BaseBBS::loadDat(const std::wstring& userAgent, const network::Proxy& proxy,
 	std::wstring str = Mlang::decode(raw_.dat, bbs_.board.code);
 
 	int i = static_cast<int>(dat_.res.size() + 1);
+
 	try {
 		for (wsregex_token_iterator it(str.begin(), str.end(), _n, -1), end; it != end; ++it)
 		{
@@ -306,7 +307,8 @@ int BaseBBS::loadDat(const std::wstring& userAgent, const network::Proxy& proxy,
 				++i;
 			}
 		}
-	} catch (...) {}
+} catch (...) {} //[pcr-fix] never abort the whole batch on one malformed line
+
 	bbs_.thread.count = (int)dat_.res.size();
 
 	return STATE_OK;
@@ -526,22 +528,29 @@ int BaseBBS::download(std::vector<char>& raw, std::wstring& modified, const std:
 
 int BaseBBS::partial(const std::wstring& userAgent, const network::Proxy& proxy, int timeout, DWORD& code)
 {
+	static const size_t TAIL = 64; // [pcr-fix] overlap bytes for resume verify
 	auto reread = [&]() {
 		int stat = download(raw_.dat, modDat_, dat(), userAgent, proxy, timeout, code);
 		if (stat == STATE_OK)
 		{
 			dat_ = Dat();
 			raw_.size = raw_.dat.size();
+			const size_t n = raw_.size < TAIL ? raw_.size : TAIL;
+			tail_.assign(raw_.dat.end() - n, raw_.dat.end());
+			pcrweb::Log(L"[pcr-fix] dat reread size=%u", (unsigned)raw_.size);
 		}
 		return stat;
 	};
 
-	if (raw_.size == 0)
+	if (raw_.size == 0 || tail_.empty() || tail_.size() > raw_.size)
 	{
 		return reread();
 	}
 
-	size_t size = raw_.size - 1; // 削除された時の検証用に1バイト前の改行を読む
+	//[pcr-fix] resume from (size - tail size): overlap-verify the known tail.
+	// A server-side dat rewrite (NG delete/regen) shifts bytes; the old 1-byte
+	// newline probe could pass on shifted bytes and silently skip res numbers.
+	size_t size = raw_.size - tail_.size();
 
 	// gzipは差分取得時には使えない
 	std::wstring header = L"Range: bytes=" + (boost::wformat(L"%u-") % size).str();
@@ -566,6 +575,7 @@ int BaseBBS::partial(const std::wstring& userAgent, const network::Proxy& proxy,
 		case 206: break; // 部分取得成功
 		case 304: return STATE_NOT_MODIFIED; // 更新されていない
 		default: // 読み直し
+			pcrweb::Log(L"[pcr-bbs] partial http=%u -> reread", (unsigned)c);
 			client.close();
 			return reread();
 		}
@@ -574,13 +584,16 @@ int BaseBBS::partial(const std::wstring& userAgent, const network::Proxy& proxy,
 	std::vector<char> buff;
 	if (client.get(buff) != network::HttpClient::STATE_EOF) { return STATE_ERROR_RECIEVE; }
 
-	if (buff.empty() || buff[0] != L'\n')
+	if (buff.empty() || buff.size() < tail_.size()
+		|| tail_.back() != '\n' // previous read must end at a line boundary
+		|| 0 != std::char_traits<char>::compare(tail_.data(), buff.data(), tail_.size()))
 	{// 読み直し
+		pcrweb::Log(L"[pcr-bbs] partial shift? buff=%u tail=%u back=%02X", (unsigned)buff.size(), (unsigned)tail_.size(), tail_.empty() ? 0 : (unsigned char)tail_.back());
 		client.close();
 		return reread();
 	}
 
-	if (buff.size() == 1)
+	if (buff.size() == tail_.size())
 	{
 		return STATE_NOT_MODIFIED;
 	}
@@ -591,8 +604,14 @@ int BaseBBS::partial(const std::wstring& userAgent, const network::Proxy& proxy,
 		modDat_ = mod;
 	}
 
-	raw_.dat.assign(buff.begin() + 1, buff.end());
+	raw_.dat.assign(buff.begin() + tail_.size(), buff.end());
 	raw_.size += raw_.dat.size();
+	// keep tail_ = last TAIL bytes of confirmed content
+	tail_.insert(tail_.end(), raw_.dat.begin(), raw_.dat.end());
+	if (tail_.size() > TAIL)
+	{
+		tail_.erase(tail_.begin(), tail_.end() - TAIL);
+	}
 	return STATE_OK;
 }
 
@@ -842,10 +861,12 @@ int ShitarabaBBS::partial(const std::wstring& userAgent, const network::Proxy& p
 		return stat;
 	}
 
-	int stat = download(raw_.dat, modDat_, dat() + (boost::wformat(L"%u-") % (dat_.res.size() + 1)).str(), userAgent, proxy, timeout, code);
+	std::wstring dl = dat() + (boost::wformat(L"%u-") % (dat_.res.size() + 1)).str();
+	int stat = download(raw_.dat, modDat_, dl, userAgent, proxy, timeout, code);
 	if (stat == STATE_OK)
 	{
 		raw_.size += raw_.dat.size();
+		pcrweb::Log(L"[pcr-bbs] shita N=%d got=%u map=%u", (int)(dat_.res.size() + 1), (unsigned)raw_.dat.size(), (unsigned)dat_.res.size());
 	}
 	return stat;
 }
