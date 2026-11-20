@@ -433,13 +433,44 @@ BOOL CBBSDlg::OnInitDialog()
 
 BOOL CBBSDlg::PreTranslateMessage(MSG* pMsg)
 {
+	//[pcr-fix] which modifier means "post" (shared by both Enter paths)
+	const int postVkey = []() -> int {
+		switch (gl_.value.detail.board.shortcut)
+		{
+		default:
+		case sl::BoardConfig::EDIT_SHORTCUT_SHIFT_ENTER: return VK_SHIFT;
+		case sl::BoardConfig::EDIT_SHORTCUT_CTRL_ENTER: return VK_CONTROL;
+		case sl::BoardConfig::EDIT_SHORTCUT_ALT_ENTER: return VK_MENU;
+		}
+	}();
 	switch (pMsg->message)
 	{
+	case WM_CHAR:
+		//[pcr-fix] the TSF/input-stack route can hand Enter to the edit as
+		//a synthesized WM_CHAR without ever dispatching the WM_KEYDOWN (the
+		//keydown check below then never runs and the edit inserts a newline
+		//while Shift is physically held - the hold-repro case). Intercept the
+		//char itself when the post modifier is down.
+		if ((pMsg->wParam == 0x0D || pMsg->wParam == 0x0A)
+			&& ((GetKeyState(postVkey) & 0x8000) || (GetAsyncKeyState(postVkey) & 0x8000)))
+		{
+			//[pcr-fix] judge by the MESSAGE target, not GetFocus():
+			//popups/webview activation can steal focus between the
+			//keypress (queued for the edit) and processing here,
+			//which used to bypass the branch while the char itself
+			//still dispatched to the edit = newline despite Shift.
+			if (pMsg->hwnd == m_xcEdit.GetSafeHwnd())
+			{
+				OnBnClickedBtnWrite();
+				return TRUE;
+			}
+		}
+		break;
 	// キーメッセージを親に渡す
 	case WM_KEYDOWN:
 	case WM_SYSKEYDOWN:
-		const CWnd* wnd = GetFocus();
-		if (wnd && wnd->GetSafeHwnd() == m_xcEdit.GetSafeHwnd())
+		//[pcr-fix] same here: message target, not live focus
+		if (pMsg->hwnd == m_xcEdit.GetSafeHwnd())
 		{// エディットにフォーカスがあるときは親にキーを渡さない
 			DWORD key = static_cast<DWORD>(pMsg->wParam);
 			if (key == VK_RETURN)
@@ -460,7 +491,11 @@ BOOL CBBSDlg::PreTranslateMessage(MSG* pMsg)
 				//GetKeyState is the queue-synchronized state - the Shift keyup
 				//sits behind this Enter keydown in the queue, so the press at
 				//typing time is preserved no matter how late we run.
-				if (GetKeyState(vkey) & 0x8000)
+				//[pcr-fix] union of queue-synchronous and physical state: sync
+				//covers early Shift release during a stalled pump, async covers
+				//the Shift keydown that was consumed by another input path
+				//(e.g. while focus sat on WebView2) and never entered our queue.
+				if ((GetKeyState(vkey) & 0x8000) || (GetAsyncKeyState(vkey) & 0x8000))
 				{
 					OnBnClickedBtnWrite();
 					return TRUE;

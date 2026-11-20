@@ -864,9 +864,39 @@ BOOL CCustomDHtmlDialog::Eval(const std::wstring& js, std::wstring* result, DWOR
 	if (FAILED(hr)) { CloseHandle(ctx.ev); return FALSE; }
 
 	DWORD t0 = GetTickCount();
+	//[pcr-fix] this pump used raw Translate+Dispatch, silently bypassing
+	//CWnd::PreTranslateMessage the main loop runs - window keybindings
+	//were lost while any Eval waited (auto-scroll Eval holds the pump most
+	//of the time: the persistent Shift+Enter-newline in the BBS write box
+	//survived every PreTranslate-side fix). Route through the same
+	//AfxCallPreTranslate walk the framework does (extern decl: MFC does not
+	//export it in a header). Nested pumps may pull the same hotkey twice,
+	//so a VK_RETURN/WM_CHAR already consumed inside THIS pump frame is
+	//dropped (double-post guard); the main-loop path keeps repeat semantics.
+	//AfxCallPreTranslate is internal to MFC (not linkable); replicate its
+	//walk: every ancestor CWnd gets its PreTranslateMessage, bottom-up.
+	int vkReturnSeen = 0; //[pcr-fix] count of Enter consumed in this pump
 	while (!ctx.done) {
 		MSG m;
 		while (PeekMessage(&m, NULL, 0, 0, PM_REMOVE)) {
+			if (m.message == WM_KEYDOWN && m.wParam == VK_RETURN && vkReturnSeen > 0)
+			{
+				continue; //[pcr-fix] nested pump re-saw the held Enter: drop
+			}
+			if ((m.message == WM_KEYDOWN && m.wParam == VK_RETURN) ||
+				(m.message == WM_CHAR && (m.wParam == 0x0D || m.wParam == 0x0A)))
+			{
+				++vkReturnSeen;
+			}
+			CWnd* pw = (m.hwnd ? CWnd::FromHandlePermanent(m.hwnd) : NULL);
+			if (pw) {
+				BOOL consumed = FALSE;
+				for (CWnd* pa = pw; pa != NULL; pa = pa->GetParent())
+				{
+					if (pa->PreTranslateMessage(&m)) { consumed = TRUE; break; }
+				}
+				if (consumed) { continue; }
+			}
 			TranslateMessage(&m);
 			DispatchMessage(&m);
 		}
