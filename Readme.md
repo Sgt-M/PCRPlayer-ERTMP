@@ -72,6 +72,9 @@ Visual Studio Community 2026 / Visual C++ 2015 で開発しています ※ほ�
 
 | バージョン | 概要 |
 |---|---|
+| [v0.3.11](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/tag/v0.3.11) | 書き込み欄で Shift+Enter がたまに改行になってしまう不具合の修正（キー処理の待機中にショートカット判定が素通りされる経路の解消） |
+| [v0.3.10](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/tag/v0.3.10) | 書き込み欄の Shift+Enter 修飾キー判定を強化（改行化の不具合は v0.3.11 で完全解消） |
+| [v0.3.9](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/tag/v0.3.9) | 内蔵BBSで新着レスが飛ぶ（表示に反映されない）不具合の修正。板を問わず高速なスレで発生 |
 | [v0.3.8](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/tag/v0.3.8) | 内蔵BBS: 条件次第で次スレ自動移動が発火しない不具合の修正（更新ブロック中も周期再試行） |
 | [v0.3.7](https://github.com/Sgt-M/PCRPlayer-ERTMP/releases/tag/v0.3.7) | 次スレ移動時のシームレス継続表示、ポップアップ閉じ時の稀なクラッシュ修正 |
 | v0.3.5 / 0.3.6 | BBS スキンフォント継承の修正、ポップアップ居残り・クラッシュ系の改善 |
